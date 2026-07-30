@@ -1,0 +1,19 @@
+# 訓練產出
+lightning_logs/
+job_logs/
+*.ckpt
+wandb/
+
+# 模型權重(太大,另行取得)
+*.onnx
+onnx/*.onnx
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+
+# 暫存
+*.tmp
+.DS_Store
