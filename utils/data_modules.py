@@ -247,7 +247,9 @@ class ERA5TCDataModule(L.LightningDataModule):
     def val_dataloader(self) -> EVAL_DATALOADERS:
         return DataLoader(
             self.val_dataset,
-            batch_size=1,
+            # 原本寫死 batch_size=1,使驗證佔掉每個 epoch 約 20% 的時間。
+            # validation_step -> _general_eval_step 是 batch-aware 的,可安全批次化。
+            batch_size=self.batch_size,
             shuffle=False,
             pin_memory=self.pin_memory,
             persistent_workers=self.persistent_workers,
@@ -257,7 +259,7 @@ class ERA5TCDataModule(L.LightningDataModule):
 
     def test_dataloader(self) -> EVAL_DATALOADERS:
         return DataLoader(
-            self.test_dataset, batch_size=1, shuffle=False, num_workers=self.n_workers
+            self.test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=self.n_workers
         )
 
     def predict_dataloader(self) -> EVAL_DATALOADERS:

@@ -76,13 +76,16 @@ data:
   surface_variables: [u10, v10, t2m, d2m, msl, sp, tcwv, tp, mtnlwrf, sst_filled, f, solar, hgt, landmask,  diurnal_sin, diurnal_cos, doy_sin, doy_cos]
   ingest_space_info: true # will add `lon` and `lat` as additional variable layers below the surface variables, remember to add `lon` and `lat` to `surface_vars` in the `model` section
   # data_spatial_shape: [13, 81, 81]
-  data_spatial_shape: [13, 201, 180]
+  # 徑向解析度 Δr = r_degree_max/(R-1)。來源 ERA5 是 0.25°,R=41 即完全匹配、不做上採樣。
+  # ⚠️ ceil(R/8) 必須是【偶數】,否則 DownSample 觸發 GetPad2D 的 5D replicate 限制而崩潰(B8)。
+  #    可用值:41(0.250°) 64(0.159°) 80(0.127°) 96(0.105°) 105(0.096°) 201(0.050°)
+  data_spatial_shape: [13, 41, 180]
   r_degree_max: 10
   original_resolution: 0.25
 
 model:
   # data_spatial_shape: [13,81,81]
-  data_spatial_shape: [13,201,180]
+  data_spatial_shape: [13,41,180]
   pressure_levels: [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
   upper_vars: [u,v,t,q,z,w]
   surface_vars: [u10, v10, t2m, d2m, msl, sp, tcwv, tp, mtnlwrf, sst_filled, f, solar, hgt, landmask,  diurnal_sin, diurnal_cos, doy_sin, doy_cos, lon, lat]
