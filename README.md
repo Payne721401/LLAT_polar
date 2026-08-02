@@ -1,112 +1,235 @@
-# LLAT.ty — 極座標版 (polar)
+# LLAT.ty — Polar-Coordinate Variant
 
-TC 中心極座標 (r, θ) 版的 LLAT.ty 區域颱風預報模式。
-源自學姊 (yungyun) 的 `DLAMPty_polar`,整理成扁平結構以便在 NCHC H200 叢集上訓練。
+A tropical-cyclone (TC) forecasting model built on a **TC-following Lagrangian limited-area
+transformer**, reformulated from a Cartesian (lat, lon) grid onto **TC-centred polar
+coordinates (r, θ)** so that resolution concentrates on the storm core.
 
-> 完整的診斷分析(bug 清單、架構比較、訓練狀態、論文方向)見另一份
-> `POLAR_ANALYSIS_REPORT.md`(在 `couple_FCNV2_LLAT` repo)。
+The backbone is Pangu-Weather's 3-D Earth-Specific Transformer (3DEST) — a 3-D Swin
+transformer in a U-Net arrangement — trained on TC-centred ERA5 reanalysis to make
+autoregressive 3-hourly forecasts on a domain that moves with the storm.
+
+> **Upstream**: derived from the `DLAMPty_polar` prototype by Y.-Y. Cheng (NTU).
+> Restructured here into a flat, reproducible layout for the NCHC H200 cluster,
+> with a test suite, corrected training configuration, and a documented defect list.
+>
+> **Reference paper**: *A Data-Driven Tropical Cyclone Model Boosted by Lagrangian
+> Limited-Area Transformers* (JAS-D-26-0056).
 
 ---
 
-## 快速開始(NCHC H200 叢集)
+## Why polar coordinates?
+
+A TC is approximately axisymmetric about its centre. A polar grid:
+
+- **aligns the grid with the physics** — tangential/radial structure maps onto grid axes;
+- **concentrates resolution in the inner core**, where intensity and eyewall dynamics live
+  (the reference paper reports systematic intensity under-prediction for severe typhoons);
+- makes the coupling feedback region (a disk of fixed radius) the **natural domain shape**.
+
+The trade-off is that a polar grid over-samples the centre and under-samples the outer
+radii, and introduces a coordinate singularity at r = 0. Both are quantified below.
+
+---
+
+## Repository layout
+
+```
+.
+├── train.py                  # LightningCLI entry point
+├── config.yaml               # single source of truth for training
+├── DLAMPty_inference.py      # ONNX inference wrapper (Cartesian ⇄ polar internally)
+├── export_onnx.py            # checkpoint → ONNX
+├── models/
+│   ├── pangu_polar.py        # PanguPolarModel: circular θ padding, dual window sizes
+│   ├── lightning_modules.py  # loss assembly, optimiser, scheduler
+│   └── loss.py               # WeightedL1Loss
+├── utils/
+│   ├── datasets.py           # ERA5TCDataset — on-the-fly Cartesian → polar resampling
+│   ├── data_processor.py     # latlon_to_polar, derived variables
+│   └── data_modules.py       # Lightning DataModule
+├── tests/                    # pytest: smoke, determinism, gradient coverage, equivariance
+└── job_scripts/
+    ├── calibrate.sh          # short throughput calibration (dev partition)
+    └── train_h200.sh         # 8×H200, 48 h, auto-resume from last.ckpt
+```
+
+---
+
+## Quick start (NCHC H200 cluster)
 
 ```bash
-git clone <你的 repo 網址> LLAT_polar
-cd LLAT_polar
+git clone <repo-url> LLAT_polar && cd LLAT_polar
 mkdir -p job_logs
 
-# 1) 填入你的計畫代號與 email(兩支腳本都要)
-sacctmgr show assoc user=$USER format=Account -n | sort -u   # 查代號
-vi job_scripts/train_h200.sh      # 改 --account / --mail-user
-vi job_scripts/calibrate.sh       # 改 --account
+# 1. Fill in your allocation and e-mail in job_scripts/*.sh
+sacctmgr show assoc user=$USER format=Account,Partition -n | sort -u
 
-# 2) 校準(4h 的 dev partition,約 15 分鐘)
+# 2. Calibrate throughput (~15 min on the 4 h dev partition)
 sbatch job_scripts/calibrate.sh
-#   或互動式(回饋更快):
-#   salloc -A <account> -p dev -N 1 --gpus-per-node=8 --ntasks-per-node=8 \
-#          --cpus-per-task=12 -t 00:30:00
-#   bash job_scripts/calibrate.sh
 
-# 3) 用校準結果填 config.yaml 的 max_steps(見下)
+# 3. Set max_steps in config.yaml from the calibration (see below) — this matters
 
-# 4) 正式訓練,三段接力(每段 48h)
+# 4. Train. Chained jobs, each 48 h; the script auto-resumes from last.ckpt.
 J1=$(sbatch --parsable job_scripts/train_h200.sh)
 J2=$(sbatch --parsable --dependency=afterany:$J1 job_scripts/train_h200.sh)
-J3=$(sbatch --parsable --dependency=afterany:$J2 job_scripts/train_h200.sh)
-echo "$J1 -> $J2 -> $J3"
 ```
 
-`train_h200.sh` 會**自動偵測 `last.ckpt` 並續訓**,所以三段用同一支腳本。
+Run the test suite with `python -m pytest tests/ -v`.
 
 ---
 
-## ⚠️ 最重要的一件事:`max_steps` 必須設成跑得完的數字
+## The single most important setting: `max_steps`
 
-`max_steps` 同時決定 **cosine 學習率的退火曲線**。
+`max_steps` does not only bound training length — it **defines the cosine
+learning-rate schedule**. Setting it far beyond what the compute budget allows means the
+learning rate never anneals, and the model never reaches the fine-tuning regime where most
+of the final convergence gain appears.
 
-前一次訓練的教訓:`max_steps: 1600000` 但實際只跑到 252,160(**15.8%**)
-⇒ 學習率只從 4.0e-4 降到 3.8e-4(**僅退火 5%**)
-⇒ 模型從未進入「精細微調」階段,val_loss 停在 0.29 看似收斂,其實是還在高溫跳動。
+Evidence from the previous run (recovered by parsing its 196 MB TensorBoard event file):
 
-**正確做法**:
-```
-max_steps = (校準量到的每秒步數) × (總預算秒數) × 0.9
-例:1.0 步/秒 × 48h × 3 段 × 3600 × 0.9 ≈ 466,000
-```
-
----
-
-## 校準要看什麼
-
-| 觀察 | 判讀 |
+| Quantity | Value |
 |---|---|
-| progress bar 的 `it/s` | 每秒幾步 → 回推 `max_steps` |
-| 一個 epoch 的總步數 | 應 ≈ 樣本數 /(`batch_size` × 8)。若接近 樣本數/`batch_size`(沒除以 8)⇒ **DDP 沒生效** |
-| `nvidia-smi` 的 GPU util | < 80% ⇒ dataloader 是瓶頸,調高 `n_workers` |
+| Wall-clock | 8.32 days |
+| Steps completed | **252,160 / 1,600,000 = 15.8 %** |
+| Epochs | 70 |
+| Validation loss | 0.3256 → 0.2906 (best) — **still decreasing at cut-off** |
+| Learning rate | 4.0e-4 → 3.8e-4 (**decayed by only 5 %**) |
+| Train vs val loss | 0.2954 vs 0.2931 — **no overfitting whatsoever** |
+
+The run was terminated by its wall-clock limit, not by convergence. The apparent plateau is
+a high-learning-rate oscillation, not a converged model.
+
+**Rule to follow instead:**
+
+```
+max_steps = (steps per second from calibration) × (total budget in seconds) × 0.9
+```
+
+Decide the budget *first*, then derive `max_steps`, so the schedule completes exactly when
+the allocation runs out.
 
 ---
 
-## 資料
+## What calibration tells you
+
+| Observation | Interpretation |
+|---|---|
+| `it/s` on the progress bar | steps per second → derive `max_steps` |
+| steps per epoch | should be ≈ `n_samples / (batch_size × n_gpu)`. If it is ≈ `n_samples / batch_size`, **DDP is not engaging** |
+| GPU utilisation (`nvidia-smi`) | below ~80 % means the dataloader is the bottleneck — raise `n_workers` |
+
+---
+
+## Data
 
 ```
 /work/yungyun0721/TC_dataset/DLDA_data/ERA5_DLDA_data/labeled_and_obs_data_with_vt_vr
 ```
-- 2007–2020(14 年)、394 個 TC、19,984 個 `*combined.nc`
-- → 約 **19,590** 個 (input, target) 樣本;訓練年份 2007–2017 約 15,400 個
-- 網格 81×81、13 層(模式內部再轉成極座標 201×180)
-- **已內含 `vt`/`vr`/`vt10`/`vr10`**(切向/徑向風,無 NaN)→ 可直接做 Vt/Vr 消融實驗,不需自行計算
+
+| | |
+|---|---|
+| Coverage | 2007–2020 (14 years), 394 TCs, 19,984 `*combined.nc` files |
+| Training pairs | ≈ 19,590 total; ≈ 15,400 for the 2007–2017 training split |
+| Source grid | 81 × 81 at **0.25°** (±10° box), 13 pressure levels |
+| Model grid | **201 × 180** in (r, θ): Δr = 0.05°, Δθ = 2° |
+| Extra fields | `vt`, `vr`, `vt10`, `vr10` (tangential/radial wind, NaN-free), plus `ws`, `vort`, `theta_e` |
+
+Tangential/radial winds are already present in the dataset, so a Vt/Vr ablation requires
+only a variable-list change — no preprocessing.
+
+**Resampling is performed on the fly** inside `ERA5TCDataset._stack_nc`, so the grid can be
+changed from `config.yaml` alone (`data_spatial_shape` and `r_degree_max`, which must be
+kept consistent between the `data` and `model` sections).
 
 ---
 
-## 目前設定
+## Configuration
 
-| 項目 | 值 | 備註 |
+| Setting | Value | Rationale |
 |---|---|---|
-| 網格 | 201 × 180 (r × θ) | r_max=10°、Δr=0.05°、Δθ=2° |
-| patch / window | (2,8,6) / (2,10,15) + (2,8,10) | layer1&4 / layer2&3 |
-| 參數量 | 24,570,650 | |
-| precision | `16-mixed` | 原為 `32`(慢 2 倍) |
-| batch_size | 4 /GPU | 8 卡 ⇒ 等效 32 |
-| n_workers | 10 | 每 task 上限 12 cores |
+| Grid | 201 × 180 (r, θ) | r_max = 10° |
+| Patch / windows | (2, 8, 6) / (2, 10, 15) and (2, 8, 10) | layers 1 & 4 / layers 2 & 3 |
+| Parameters | 24,570,650 | |
+| Precision | `16-mixed` | the reference model trained successfully in fp16; fp32 halves throughput. Use `bf16-mixed` if instability appears — not `32` |
+| Batch size | 4 per GPU (32 effective on 8 GPUs) | |
+| Dataloader workers | 10 | the cluster allows 12 cores per GPU; polar resampling is CPU-bound |
 
 ---
 
-## 已知問題(訓練不受影響,推論才會踩到)
+## Measured properties and known defects
 
-| # | 位置 | 問題 |
+All findings below were verified empirically (synthetic-field probes, direct function calls,
+or statistics over saved model output) rather than by code reading alone.
+
+### Verified non-issues
+
+- **θ seam continuity.** Circular vs zero padding, and retaining vs removing the
+  cross-seam attention mask, all yield a seam-to-interior jump ratio of ≈ 1.0 (no seam).
+  Non-overlapping patch embedding means this transformer has no seam mechanism to begin
+  with — unlike CNN-based polar models, which require replicated padding.
+- **Strict θ-roll equivariance.** Swin window attention is equivariant only to whole-window
+  rolls, at granularity `patch_θ × window_θ` (and only if `window_θ` is even and the coarse
+  stage is a single window). Under the current window choice no non-trivial equivariant roll
+  exists. Equivariance is therefore a diagnostic, not an acceptance criterion; the
+  corresponding test is marked `xfail`.
+
+### Open defects
+
+| ID | Location | Issue | Affects |
+|---|---|---|---|
+| B1 | `DLAMPty_inference.py:319` | `polar_to_latlon(fill_value=0.0)` writes **physical zeros** outside r_max (1,536 cells, 23.4 % of the frame, in 18 of 20 channels). Should be NaN. | inference, plotting |
+| B2 | `utils/data_processor.py:212` | TC centre is the plain mean over the whole array. Fed the zeros from B1, it returns 104.93°E instead of 137.00°E — a **≈ 3,400 km** offset. Latent: the archived run was unaffected, so the executed code differed from what is in the tree. | inference |
+| B3 | `DLAMPty_inference.py:43` | `r = linspace(0, r_max, R)` starts at zero, so the innermost ring samples one physical point 180 times (coordinate singularity). Use `r_min = Δr/2`. | inference, data |
+| B4 | `export_onnx.py` | `input_sample` still uses the 81 × 81 Cartesian shape; shape mismatch for the polar model. | export |
+| B5 | `utils/datasets.py:131` | Operator precedence: `int((x - int(...)+1)/2)` evaluates as `(x-79)/2` rather than `(x-81)/2` — an off-by-two crop. Only triggers when the source grid is not already 81 × 81. | data |
+| B6 | `DLAMPty_inference.py:331` | The `np.meshgrid` assignment is indented outside its `if` block; `NameError` if `uniformize_lonlat` is ever false. | inference |
+| B7 | `models/pangu_polar.py:728` | `earth_specific_bias` is an all-zero plain tensor (not a `Parameter`, not a buffer). Adding it is a mathematical no-op, yet each of the 16 blocks indexes a ~26 MB tensor **on CPU** and copies it to GPU every forward pass. | **training throughput** |
+
+B1–B6 are confined to the inference path and do not affect training. **B7 does** — deleting
+the dead bias computation is numerically identical and removes roughly 400 MB of
+host-to-device traffic per forward pass.
+
+### Outer-ring artefact
+
+Saved forecasts contain 176 unphysical cells (2.7 %), all at r = 39.3–40.0 px — the outermost
+~0.2° — with mean sea-level pressure as low as 423 hPa. Both coordinate transforms were
+verified clean against uniform-field probes, so the artefact originates in the model output
+at large radius. The leading hypothesis is that an **unweighted loss under-constrains the
+outer domain**: every ring carries the same number of grid points, but ring area grows with
+r, so per-unit-area weight scales as 1/r — an ≈ 80× bias toward the innermost ring. The core
+(r < 8°) is unaffected, and because the coupling overwrites r > 8° each step, the artefact
+does not accumulate.
+
+---
+
+## Improvement roadmap
+
+| Priority | Change | Expected effect |
 |---|---|---|
-| B1 | `DLAMPty_inference.py:319` | `polar_to_latlon(fill_value=0.0)` → 圓外填**物理 0**(應為 NaN);繪圖會出現彩虹環與異常區 |
-| B2 | `utils/data_processor.lonlat_uniformizer` | 中心用全陣列平均;若吃到 B1 的 0,TC 中心會偏約 **3400 km**(潛伏未爆彈) |
-| B3 | `DLAMPty_inference.py:43` | `r` 從 0 起算 → 中心奇點(最內圈 180 個 θ 採到同一點) |
-| B4 | `export_onnx.py` | `input_sample` 仍是 81×81 笛卡兒形狀,對 polar 模型會 shape mismatch |
-| B7 | `models/pangu_polar.py` `EarthAttention3D` | `earth_specific_bias` 全零、非 Parameter;每步多一次 CPU→GPU 搬運 |
+| 1 | Set `max_steps` from the actual budget | lets the cosine schedule anneal — likely the single largest gain |
+| 2 | `precision: 16-mixed` | ≈ 2× throughput (already applied) |
+| 3 | Remove the dead bias computation (B7) | removes per-step host-to-device traffic |
+| 4 | Coarsen the radial grid (Δr = 0.05° over-samples a 0.25° source) | 201 × 180 costs 5.5× the Cartesian grid; a matched grid would cut this substantially |
+| 5 | Add a configurable radial loss weight `w(r) = r^p` | targets the outer-ring artefact; `p = 1` is the equal-area baseline |
+| 6 | Add a magnitude-weighted loss term | addresses intensity under-prediction |
+| 7 | Keep the autoregressive state in polar throughout inference | removes 2 interpolations per step (≈ 160 over a 10-day forecast) |
+| 8 | `torch.compile`, activation checkpointing | 10–50 % and larger batches respectively |
 
 ---
 
-## 測試
+## Testing
 
 ```bash
 python -m pytest tests/ -v
 ```
-- `test_smoke` / `test_determinism` / `test_backward_grad_coverage` — 會過
-- `test_theta_equivariance` — 標為 **xfail 診斷**(等變性非驗收標準,詳見報告)
+
+| Test | Purpose |
+|---|---|
+| `test_smoke` | forward pass, output shapes, finiteness |
+| `test_determinism` | no hidden stochasticity in `eval()` mode |
+| `test_backward_grad_coverage` | every parameter receives a finite gradient |
+| `test_dead_bias_landmine` | pins the B7 defect; flip the assertion once fixed |
+| `test_theta_equivariance` | `xfail` numerical diagnostic (see above) |
+
+These are architecture-level properties: they hold for any weights, so they run in seconds on
+CPU with random tensors and catch structural defects before any GPU time is spent.
