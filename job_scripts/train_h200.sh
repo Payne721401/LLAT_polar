@@ -13,7 +13,7 @@
 #   - 系統限制:每張 GPU 最多 12 CPU cores / 200 GB RAM
 #     8 GPU × 12 = 96 cores(節點 112),8 × 200 = 1600 GB(節點 1900 GB)✓
 # ============================================================================
-#SBATCH --account=REPLACE_ME          # ← 必填!用 sacctmgr show assoc user=$USER 查
+#SBATCH --account=MST115002          # ← 必填!用 sacctmgr show assoc user=$USER 查
 #SBATCH --job-name=LLAT_polar
 #SBATCH --partition=8gpus             # 48h;校準請改 dev(4h)
 #SBATCH --nodes=1
@@ -24,7 +24,7 @@
 #SBATCH --output=job_logs/job-%j.out
 #SBATCH --error=job_logs/job-%j.err
 #SBATCH --mail-type=END,FAIL
-#SBATCH --mail-user=REPLACE_ME        # ← 填你的 email
+#SBATCH --mail-user=90727sam@gmail.com        # ← 填你的 email
 
 set -euo pipefail
 mkdir -p job_logs

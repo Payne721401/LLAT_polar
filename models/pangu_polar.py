@@ -776,26 +776,23 @@ class EarthAttention3D(nn.Module):
         query = query * self.scale
         attention = query @ key.transpose(-2, -1)
 
-        bias = self.earth_specific_bias[self.position_index]
-        bias = bias.reshape((self.window_size[0]*self.window_size[1]*self.window_size[2],
-                             self.window_size[0]*self.window_size[1]*self.window_size[2],
-                             self.window_types,
-                             self.heads)).permute(2, 3, 0, 1)
-
-        # Bias is different for each pressure level and latitude, so we need to reshape q@k
-        attention = attention.reshape(-1, self.mZ, self.mH, self.mW,
-                                      self.heads, attention.shape[-2], attention.shape[-1])
-        attention = attention.permute(0, 3, 1, 2, 4, 5, 6)  # (B, mW, mZ, mH, heads, wZ*wH*wW, wZ*wH*wW)
-        attention = attention.reshape(-1, self.mZ*self.mH,
-                                      self.heads, attention.shape[-2], attention.shape[-1])  # (B*mW, mZ*mH, heads, wZ*wH*wW, wZ*wH*wW)
-
-        bias = bias.to(x.device) # 為什麼？
-        attention = attention + bias
-        attention = attention.reshape(-1, self.mW, self.mZ, self.mH,
-                                      self.heads, attention.shape[-2], attention.shape[-1])
-        attention = attention.permute(0, 2, 3, 1, 4, 5, 6)  # (B, mZ, mH, mW, heads, wZ*wH*wW, wZ*wH*wW)
-        # (B*mZ*mH*mW, heads, wZ*wH*wW, wZ*wH*wW)
-        attention = attention.reshape(-1, self.heads, attention.shape[-2], attention.shape[-1])
+        # --- earth_specific_bias 已停用(B7)---------------------------------
+        # 原本這裡會:
+        #   (1) 用 position_index 索引 self.earth_specific_bias  → 在 CPU 上建一個 ~26 MB 張量
+        #   (2) bias.to(x.device)                                → 每次 forward 搬一次 CPU→GPU
+        #   (3) attention + bias
+        # 但 earth_specific_bias 是【全零且不可訓練】(nn.Parameter 與 trunc_normal_ 初始化
+        # 都被註解掉,見 __init__),所以 (3) 在數學上是 no-op。
+        #
+        # 而 (3) 前後那一整串 reshape/permute 只是為了把 attention 對齊 bias 的
+        # (window_types, heads, L, L) 佈局;移除 bias 後那串是精確的恆等來回轉換,
+        # 一併刪除。全模型 16 個 block × 每步一次,可省下可觀的 CPU 運算與 PCIe 流量。
+        #
+        # 若日後要【真正啟用】位置偏置(建議做法):
+        #   - __init__ 取消註解,把 earth_specific_bias 註冊為 nn.Parameter + trunc_normal_
+        #   - self.position_index 改用 register_buffer,讓它隨模型 .to(device) 一起搬
+        #   - 還原下面被刪除的 reshape → add → reshape 區塊
+        # --------------------------------------------------------------------
 
         if mask is not None:
             nW = mask.shape[0]

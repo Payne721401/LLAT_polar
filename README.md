@@ -183,11 +183,11 @@ or statistics over saved model output) rather than by code reading alone.
 | B4 | `export_onnx.py` | `input_sample` still uses the 81 × 81 Cartesian shape; shape mismatch for the polar model. | export |
 | B5 | `utils/datasets.py:131` | Operator precedence: `int((x - int(...)+1)/2)` evaluates as `(x-79)/2` rather than `(x-81)/2` — an off-by-two crop. Only triggers when the source grid is not already 81 × 81. | data |
 | B6 | `DLAMPty_inference.py:331` | The `np.meshgrid` assignment is indented outside its `if` block; `NameError` if `uniformize_lonlat` is ever false. | inference |
-| B7 | `models/pangu_polar.py:728` | `earth_specific_bias` is an all-zero plain tensor (not a `Parameter`, not a buffer). Adding it is a mathematical no-op, yet each of the 16 blocks indexes a ~26 MB tensor **on CPU** and copies it to GPU every forward pass. | **training throughput** |
+| ~~B7~~ | `models/pangu_polar.py` | **FIXED.** `earth_specific_bias` was an all-zero plain tensor (not a `Parameter`, not a buffer), so adding it was a no-op — yet each of the 16 blocks indexed a ~26 MB tensor **on CPU** and copied it to GPU every forward. The surrounding reshape/permute round-trip existed only to align with the bias layout and was likewise removable. Verified **bit-identical** output; **18 % faster** forward on CPU. | training throughput |
 
-B1–B6 are confined to the inference path and do not affect training. **B7 does** — deleting
-the dead bias computation is numerically identical and removes roughly 400 MB of
-host-to-device traffic per forward pass.
+B1–B6 are confined to the inference path and do not affect training. B7 did affect training
+and has been removed; see the commit for the verification procedure (bit-identical outputs
+over a fixed seed, plus the full test suite).
 
 ### Outer-ring artefact
 
@@ -208,7 +208,7 @@ does not accumulate.
 |---|---|---|
 | 1 | Set `max_steps` from the actual budget | lets the cosine schedule anneal — likely the single largest gain |
 | 2 | `precision: 16-mixed` | ≈ 2× throughput (already applied) |
-| 3 | Remove the dead bias computation (B7) | removes per-step host-to-device traffic |
+| ~~3~~ | ~~Remove the dead bias computation (B7)~~ | **done** — 18 % faster forward, bit-identical |
 | 4 | Coarsen the radial grid (Δr = 0.05° over-samples a 0.25° source) | 201 × 180 costs 5.5× the Cartesian grid; a matched grid would cut this substantially |
 | 5 | Add a configurable radial loss weight `w(r) = r^p` | targets the outer-ring artefact; `p = 1` is the equal-area baseline |
 | 6 | Add a magnitude-weighted loss term | addresses intensity under-prediction |
