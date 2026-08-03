@@ -13,7 +13,7 @@ trainer:
   num_nodes: 1    # how many nodes (more nodes)
   # 精度:原版 LLAT 用 fp16 且訓練成功。fp32 慢約 2 倍。
   # 若遇到 NaN/不穩,改 'bf16-mixed'(H200 支援,指數範圍同 fp32),不要退回 '32'
-  precision: '16-mixed'
+  precision: 'bf16-mixed'   # H200 原生支援;指數範圍同 fp32,不會溢位、免 loss scaling
   callbacks: null
   fast_dev_run: false
   max_epochs: null
@@ -22,7 +22,10 @@ trainer:
   #    設太大(如 1600000)但只跑 15% ⇒ lr 幾乎不退火 ⇒ 模型無法收斂到底(學姊那次的問題)
   #    做法:先跑 job_scripts/calibrate.sh 量出每秒步數,再回推:
   #         max_steps = 每秒步數 × 總預算秒數 × 0.9
-  max_steps: 1600000        # ← TODO: 校準後改成務實值
+  # 校準實測(8×H200):3.60 it/s;steps/epoch = 14824 / (batch 4 × 8) ≈ 463
+  #   93000 步 ≈ 200 epochs ≈ 7 小時   ← 目前設定
+  #  186000 步 ≈ 400 epochs ≈ 14 小時
+  max_steps: 93000
   min_steps: null
   max_time: null            # 由 SLURM 的 48h 上限管控,分段續訓
   limit_train_batches: null
