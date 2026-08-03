@@ -23,9 +23,10 @@ trainer:
   #    做法:先跑 job_scripts/calibrate.sh 量出每秒步數,再回推:
   #         max_steps = 每秒步數 × 總預算秒數 × 0.9
   # 校準實測(8×H200):3.60 it/s;steps/epoch = 14824 / (batch 4 × 8) ≈ 463
-  #   93000 步 ≈ 200 epochs ≈ 7 小時   ← 目前設定
-  #  186000 步 ≈ 400 epochs ≈ 14 小時
-  max_steps: 93000
+  #   換算:每小時約 11,700 步(含驗證/存檔開銷)
+  #    70000 ≈  6 h | 82000 ≈  7 h |  93000 ≈  8 h
+  #   105000 ≈  9 h | 117000 ≈ 10 h | 140000 ≈ 12 h   ← 目前:105000(9 小時 / ~227 epochs)
+  max_steps: 105000
   min_steps: null
   max_time: null            # 由 SLURM 的 48h 上限管控,分段續訓
   limit_train_batches: null

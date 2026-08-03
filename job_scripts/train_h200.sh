@@ -41,9 +41,10 @@ module load gcc/11.5   || true
 module load cuda/12.6  || true
 # shellcheck disable=SC1091
 source "$(conda info --base)/etc/profile.d/conda.sh"
-set +u                                   # conda activate 期間關掉 -u
+set +u                                   # conda 的 activate.d 會引用未定義變數
 conda activate ty
-set -u 2>/dev/null || true
+# 不要重新開啟 -u:第一次訓練時 EXTRA 是空陣列,
+# "${EXTRA[@]}" 在 set -u 下展開空陣列會報 unbound variable 而中止
 
 echo "--- GPU ---"
 nvidia-smi -L
