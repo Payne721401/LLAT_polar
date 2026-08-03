@@ -64,16 +64,20 @@ data:
   root_dir: '/work/yungyun0721/TC_dataset/DLDA_data/ERA5_DLDA_data/labeled_and_obs_data_with_vt_vr'
   # data_tar: '/nwpr/wfc/com136/data/DLAMP.ty.plus.tar'
   # fast_dir: '/dev/shm/DLAMP.ty'
-  stat_mean_file: 'utils/stat_mean.nc'
-  stat_std_file: 'utils/stat_std.nc'
+  stat_mean_file: 'utils/stat_mean_vtvr.nc'   # 由 tools/compute_vtvr_stats.py 產生
+  stat_std_file: 'utils/stat_std_vtvr.nc'     # 同上
   train_start: 2007
   train_end: 2018
   val_start: 2018
   val_end: 2020
   test_start: 2020
   test_end: 2021
-  upper_variables: [u,v,t,q,z,w]
-  surface_variables: [u10, v10, t2m, d2m, msl, sp, tcwv, tp, mtnlwrf, sst_filled, f, solar, hgt, landmask,  diurnal_sin, diurnal_cos, doy_sin, doy_cos]
+  # ── Vt/Vr 版:切向/徑向風取代笛卡兒 u/v ──────────────────────────────
+  # 資料集已內含 vt/vr/vt10/vr10(無 NaN)。這是資訊無損的旋轉(θ 由網格隱含),
+  # 通道數不變(高空 6、地面 18+lon/lat=20)⇒ 模型架構完全不用改。
+  # ⚠️ 必須先跑 tools/compute_vtvr_stats.py 產生含 vt/vr 的統計檔,否則 KeyError。
+  upper_variables: [vt,vr,t,q,z,w]
+  surface_variables: [vt10, vr10, t2m, d2m, msl, sp, tcwv, tp, mtnlwrf, sst_filled, f, solar, hgt, landmask,  diurnal_sin, diurnal_cos, doy_sin, doy_cos]
   ingest_space_info: true # will add `lon` and `lat` as additional variable layers below the surface variables, remember to add `lon` and `lat` to `surface_vars` in the `model` section
   # data_spatial_shape: [13, 81, 81]
   # 徑向解析度 Δr = r_degree_max/(R-1)。來源 ERA5 是 0.25°,R=41 即完全匹配、不做上採樣。
@@ -87,8 +91,8 @@ model:
   # data_spatial_shape: [13,81,81]
   data_spatial_shape: [13,41,180]
   pressure_levels: [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
-  upper_vars: [u,v,t,q,z,w]
-  surface_vars: [u10, v10, t2m, d2m, msl, sp, tcwv, tp, mtnlwrf, sst_filled, f, solar, hgt, landmask,  diurnal_sin, diurnal_cos, doy_sin, doy_cos, lon, lat]
+  upper_vars: [vt,vr,t,q,z,w]
+  surface_vars: [vt10, vr10, t2m, d2m, msl, sp, tcwv, tp, mtnlwrf, sst_filled, f, solar, hgt, landmask,  diurnal_sin, diurnal_cos, doy_sin, doy_cos, lon, lat]
   depths: [2, 6]
   heads: [6, 12]
   embed_dim: 192
