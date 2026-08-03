@@ -9,7 +9,7 @@
 #
 # 也可以 sbatch 這支(partition 已設 dev / 30 分鐘)
 # ============================================================================
-#SBATCH --account=REPLACE_ME
+#SBATCH --account=MST115002
 #SBATCH --job-name=LLAT_cal
 #SBATCH --partition=dev
 #SBATCH --nodes=1
