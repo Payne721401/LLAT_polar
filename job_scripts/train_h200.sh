@@ -26,7 +26,7 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=90727sam@gmail.com        # ← 填你的 email
 
-set -euo pipefail
+set -eo pipefail          # 注意:不要加 -u,conda 的 activate.d 腳本會引用未定義變數
 mkdir -p job_logs
 
 echo "=========================================="
@@ -35,12 +35,15 @@ echo "Job     : ${SLURM_JOB_ID:-NA}"
 echo "Node    : $(hostname)"
 echo "WorkDir : $(pwd)"
 
-module load miniconda3/24.11.1
-module load gcc/11.5.0
-module load cuda/12.4
+# 模組名以本叢集 `ml avail` 為準(與 nano5 不同)
+module load miniconda3 || true          # 通常已預設載入
+module load gcc/11.5   || true
+module load cuda/12.6  || true
 # shellcheck disable=SC1091
 source "$(conda info --base)/etc/profile.d/conda.sh"
+set +u                                   # conda activate 期間關掉 -u
 conda activate ty
+set -u 2>/dev/null || true
 
 echo "--- GPU ---"
 nvidia-smi -L

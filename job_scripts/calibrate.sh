@@ -20,11 +20,14 @@
 #SBATCH --output=job_logs/cal-%j.out
 #SBATCH --error=job_logs/cal-%j.err
 
-set -euo pipefail
+set -eo pipefail          # 不要加 -u(見 train_h200.sh 註解)
 mkdir -p job_logs
 
-module load miniconda3/24.11.1 gcc/11.5.0 cuda/12.4 2>/dev/null || true
+module load miniconda3 || true
+module load gcc/11.5   || true
+module load cuda/12.6  || true
 source "$(conda info --base)/etc/profile.d/conda.sh"
+set +u
 conda activate ty
 
 nvidia-smi -L
