@@ -18,7 +18,8 @@ import os
 import struct
 import sys
 
-MAIN = ("val_loss", "train_loss_epoch", "train_loss_step", "lr-AdamW", "epoch")
+MAIN = ("val_loss", "train_loss_epoch", "train_loss_step", "lr-AdamW", "epoch",
+        "gradient_2norm")
 
 
 def varint(b, i):
