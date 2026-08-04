@@ -1,0 +1,60 @@
+[rank: 6] Seed set to 2
+[rank: 2] Seed set to 2
+[rank: 4] Seed set to 2
+[rank: 0] Seed set to 2
+[rank: 1] Seed set to 2
+[rank: 3] Seed set to 2
+[rank: 5] Seed set to 2
+[rank: 7] Seed set to 2
+Using 16bit Automatic Mixed Precision (AMP)
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+Initializing distributed: GLOBAL_RANK: 0, MEMBER: 1/8
+Initializing distributed: GLOBAL_RANK: 1, MEMBER: 2/8
+Initializing distributed: GLOBAL_RANK: 5, MEMBER: 6/8
+Initializing distributed: GLOBAL_RANK: 7, MEMBER: 8/8
+Initializing distributed: GLOBAL_RANK: 2, MEMBER: 3/8
+Initializing distributed: GLOBAL_RANK: 4, MEMBER: 5/8
+Initializing distributed: GLOBAL_RANK: 6, MEMBER: 7/8
+Initializing distributed: GLOBAL_RANK: 3, MEMBER: 4/8
+----------------------------------------------------------------------------------------------------
+distributed_backend=nccl
+All distributed processes registered. Starting with 8 processes
+----------------------------------------------------------------------------------------------------
+
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0,1,2,3,4,5,6,7]
+LOCAL_RANK: 1 - CUDA_VISIBLE_DEVICES: [0,1,2,3,4,5,6,7]
+LOCAL_RANK: 2 - CUDA_VISIBLE_DEVICES: [0,1,2,3,4,5,6,7]
+LOCAL_RANK: 3 - CUDA_VISIBLE_DEVICES: [0,1,2,3,4,5,6,7]
+LOCAL_RANK: 4 - CUDA_VISIBLE_DEVICES: [0,1,2,3,4,5,6,7]
+LOCAL_RANK: 5 - CUDA_VISIBLE_DEVICES: [0,1,2,3,4,5,6,7]
+LOCAL_RANK: 6 - CUDA_VISIBLE_DEVICES: [0,1,2,3,4,5,6,7]
+LOCAL_RANK: 7 - CUDA_VISIBLE_DEVICES: [0,1,2,3,4,5,6,7]
+Loading `train_dataloader` to estimate number of stepping batches.
+/home/ou721401/.conda/envs/ty/lib/python3.11/site-packages/lightning/pytorch/utilities/model_summary/model_summary.py:242: Precision 16-mixed is not supported by the model summary.  Estimated model size in MB will not be accurate. Using 32 bits instead.
+
+  | Name      | Type            | Params | Mode  | FLOPs
+--------------------------------------------------------------
+0 | model     | PanguPolarModel | 24.6 M | train | 0    
+1 | criterion | L1Loss          | 0      | train | 0    
+--------------------------------------------------------------
+24.6 M    Trainable params
+0         Non-trainable params
+24.6 M    Total params
+98.283    Total estimated model params size (MB)
+248       Modules in train mode
+0         Modules in eval mode
+0         Total Flops
+SLURM auto-requeueing enabled. Setting signal handlers.
+SLURM auto-requeueing enabled. Setting signal handlers.
+SLURM auto-requeueing enabled. Setting signal handlers.
+SLURM auto-requeueing enabled. Setting signal handlers.
+SLURM auto-requeueing enabled. Setting signal handlers.
+SLURM auto-requeueing enabled. Setting signal handlers.
+SLURM auto-requeueing enabled. Setting signal handlers.
+SLURM auto-requeueing enabled. Setting signal handlers.
+/home/ou721401/.conda/envs/ty/lib/python3.11/site-packages/lightning/pytorch/trainer/connectors/logger_connector/result.py:433: It is recommended to use `self.log('elapsed_time_totals', ..., sync_dist=True)` when logging on epoch level in distributed setting to accumulate the metric across devices.
+/home/ou721401/.conda/envs/ty/lib/python3.11/site-packages/lightning/pytorch/trainer/connectors/logger_connector/result.py:433: It is recommended to use `self.log('elapsed_time_days', ..., sync_dist=True)` when logging on epoch level in distributed setting to accumulate the metric across devices.
+/home/ou721401/.conda/envs/ty/lib/python3.11/site-packages/lightning/pytorch/trainer/connectors/logger_connector/result.py:433: It is recommended to use `self.log('elapsed_time_hours', ..., sync_dist=True)` when logging on epoch level in distributed setting to accumulate the metric across devices.
+`Trainer.fit` stopped: `max_steps=13600` reached.
