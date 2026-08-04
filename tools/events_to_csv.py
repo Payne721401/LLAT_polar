@@ -136,7 +136,7 @@ def main():
 
     # ---- 逐變數指標 ----
     if want_all:
-        per = [t for t in S if t.startswith(("val_RMSE/", "val_norm_L1/"))]
+        per = [t for t in S if t.startswith(("val_RMSE/", "val_norm_L1/", "grad_2.0_norm/"))]
         out2 = os.path.join(vdir, "per_var.csv")
         with open(out2, "w", newline="") as f:
             wr = csv.writer(f)
