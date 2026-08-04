@@ -1,0 +1,40 @@
+# 短診斷 A2:精度的【真正單變數】對照 —— bf16 → fp32,排程完全不動
+#
+#   sbatch --export=ALL,RUNDIR=runs/diag_fp32_s105k,OVERLAY=experiments/diag_fp32_sched105k.yaml \
+#          job_scripts/train_h200.sh
+#
+# ── 為什麼要有這一組(A 錯在哪裡)────────────────────────────────────────
+# 診斷 A 為了縮短時間把 max_steps 105000 → 13600。但 cosine 的長度來自
+# lightning_modules.py 的 `trainer.estimated_stepping_batches`,而 Lightning 定義
+#
+#       estimated_stepping_batches = min(每epoch步數 × max_epochs, max_steps)
+#
+# 所以【改 max_steps 就等於改 LR 軌跡】,A 因此同時變動了精度與 LR 兩項:
+#
+#       step        A 的 LR       原始的 LR
+#        3500        3.6e-4        4.0e-4
+#        5400        2.9e-4        4.0e-4     ← 原始在此開始失控
+#
+# 注意:改用 max_epochs 限制【同樣無效】—— 上式取 min,壓縮效果一模一樣。
+# 唯一不影響排程的停止條件是 max_time(由 Timer callback 執行,不進上式)。
+#
+# ── 本組的設計 ──────────────────────────────────────────────────────────
+# max_steps 維持 config.yaml 的 105000、max_epochs 維持 null
+#   ⇒ cosine 曲線與原始訓練【逐點相同】
+# 以 max_time 提早停止
+#   ⇒ 只改精度一項,與原始訓練構成真正的單變數對照
+#
+# 不需要另跑 bf16 對照組:原始訓練(version_233052)就是該組,已有 105000 步資料。
+#
+# ── 判讀(原始訓練的惡化時點極銳利)──────────────────────────────────────
+#       step 3000-3999   梯度中位 0.204    ← 仍健康
+#       step 4000-4999   梯度中位 2.254    ← 11 倍跳升,最大 576
+#       step 5000-5999   梯度中位 72.15
+#
+#   本組在 step ~4000 同樣爆掉  → 精度【不是】主因,主因是持續維持峰值 LR
+#   本組維持 O(1) 通過 step 6000 → 精度【就是】主因,bf16 尾數 8 bits 不足
+#
+# fp32 約 7,800 步/小時,1 小時可到 step ~7,800,足以涵蓋判讀區間。
+trainer:
+  precision: '32'
+  max_time: "00:01:00:00"
