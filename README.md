@@ -48,6 +48,11 @@ radii, and introduces a coordinate singularity at r = 0. Both are quantified bel
 │   ├── data_processor.py     # latlon_to_polar, derived variables
 │   └── data_modules.py       # Lightning DataModule
 ├── tests/                    # pytest: smoke, determinism, gradient coverage, equivariance
+├── experiments/              # config overlays — one file per experiment, deltas only
+├── analysis/                 # per-run reports, notebook and extracted curves
+├── tools/
+│   ├── events_to_csv.py      # TensorBoard events → CSV (no tensorboard dependency)
+│   └── compute_vtvr_stats.py # normalisation statistics for vt/vr
 └── job_scripts/
     ├── calibrate.sh          # short throughput calibration (dev partition)
     └── train_h200.sh         # 8×H200, 48 h, auto-resume from last.ckpt

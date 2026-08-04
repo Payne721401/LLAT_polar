@@ -1,8 +1,21 @@
+# ⚠️ gitignore 不支援「尾隨註解」——# 只有在行首才是註解,
+#    寫成 `runs/   # 說明` 會讓整串變成 pattern 而完全失效。註解一律獨立成行。
+
 # 訓練產出
 lightning_logs/
 job_logs/
+# RUNDIR=runs/<實驗名> 的各實驗輸出
+runs/
+# 手動封存的舊 version_* 目錄
+_archive/
 *.ckpt
 wandb/
+
+# 分析:原始 TensorBoard event 檔動輒 80 MB+(GitHub 上限 100 MB),
+# 只保留 tools/events_to_csv.py 萃取出的 CSV、notebook 與報告。
+analysis/events.out.tfevents.*
+# 統計檔的檢查用副本;正本在 utils/
+analysis/*.nc
 
 # 模型權重(太大,另行取得)
 *.onnx
