@@ -76,6 +76,19 @@ J2=$(sbatch --parsable --dependency=afterany:$J1 job_scripts/train_h200.sh)
 
 Run the test suite with `python -m pytest tests/ -v`.
 
+### Running experiments without touching the baseline
+
+`config.yaml` is the baseline and should not be edited per experiment. LightningCLI
+merges multiple `--config` files, later overriding earlier, so each experiment is a
+small overlay under `experiments/` that records only its deltas:
+
+```bash
+srun -n 8 python train.py fit --config config.yaml --config experiments/lr1e-4.yaml
+```
+
+The fully resolved configuration is written to `lightning_logs/version_*/config.yaml`,
+so every run is self-documenting and the baseline stays untouched.
+
 ---
 
 ## The single most important setting: `max_steps`
