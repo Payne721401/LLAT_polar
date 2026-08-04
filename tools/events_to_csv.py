@@ -134,6 +134,37 @@ def main():
         b = min(vals); bs = p[vals.index(b)][0]
         print(f"  {t:<18} 首 {vals[0]:>9.5f}  末 {vals[-1]:>9.5f}  最佳 {b:>9.5f} @ step {bs}")
 
+    # ---- 健康檢查 ----
+    # 「首/末/最佳」看不出梯度爆炸:它是【整個分布上移】,不是單點暴衝。
+    # 判讀要看中位數與最近一段的趨勢,故單獨列出。
+    g = sorted(S.get("gradient_2norm", []))
+    if g:
+        vals = [v for _, v, _ in g]
+        bad = sum(1 for v in vals if v != v or v in (float("inf"), float("-inf")))
+        ok = [v for v in vals if v == v and abs(v) != float("inf")]
+        tail = ok[-max(1, len(ok) // 5):]          # 最近 20%
+
+        def med(a):
+            a = sorted(a)
+            n = len(a)
+            return a[n // 2] if n % 2 else (a[n // 2 - 1] + a[n // 2]) / 2
+
+        print()
+        print("  ── 梯度健康檢查 ──────────────────────────────────")
+        print(f"  全程中位   {med(ok):>10.4g}      最近20%中位 {med(tail):>10.4g}")
+        print(f"  超過 clip=2.0  {100 * sum(1 for v in ok if v > 2) / len(ok):>5.1f}%"
+              f"      最大 {max(ok):>10.4g}")
+        if bad:
+            first_bad = next(s for s, v, _ in g if v != v or abs(v) == float("inf"))
+            print(f"  ⚠️ NaN/Inf {bad}/{len(vals)} 個,首次於 step {first_bad}"
+                  f"  ← 權重可能已損壞,檢查 val_loss 是否也是 NaN")
+        m = med(ok)
+        verdict = ("✅ 正常" if m < 1 else
+                   "🟡 留意,提前再檢查一次" if m < 10 else
+                   "❌ 已失控 —— 建議 scancel")
+        print(f"  判定: {verdict}    (參考:fp32 0.23 / bf16+5e-5 0.28 / 失控時 147)")
+        print("  ────────────────────────────────────────────────")
+
     # ---- 逐變數指標 ----
     if want_all:
         per = [t for t in S if t.startswith(("val_RMSE/", "val_norm_L1/", "grad_2.0_norm/"))]
