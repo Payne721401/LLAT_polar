@@ -42,6 +42,11 @@ module load cuda/12.6  || true
 # shellcheck disable=SC1091
 source "$(conda info --base)/etc/profile.d/conda.sh"
 set +u                                   # conda 的 activate.d 會引用未定義變數
+# sbatch 預設 --export=ALL,會把「送出 job 的登入 shell 已活化的 conda 環境」
+# 整包帶進計算節點,和節點上 module load 的 conda 打架:
+# conda activate 以為已在 ty 而空轉,PATH 卻已被 module 蓋成 base → import torch 失敗。
+# 先把繼承來的環境剝乾淨,再活化一次。
+while [ -n "${CONDA_PREFIX:-}" ]; do conda deactivate || break; done
 conda activate ty
 # 不要重新開啟 -u:第一次訓練時 EXTRA 是空陣列,
 # "${EXTRA[@]}" 在 set -u 下展開空陣列會報 unbound variable 而中止
@@ -49,11 +54,21 @@ conda activate ty
 echo "--- GPU ---"
 nvidia-smi -L
 echo "--- Python ---"
-python -c "import torch;print('torch',torch.__version__,'| cuda',torch.cuda.is_available(),'| n_gpu',torch.cuda.device_count())"
+echo "CONDA_PREFIX = ${CONDA_PREFIX:-<空>}"
+echo "python       = $(command -v python)"
+python -c "import torch;print('torch',torch.__version__,'| cuda',torch.cuda.is_available(),'| n_gpu',torch.cuda.device_count())" || {
+    echo "!!! 環境活化失敗:ty 裡找不到 torch。檢查 conda env list / module load。"
+    exit 1
+}
 
 # ---- 自動續訓:找最新的 last.ckpt ----
+# 換 overlay 做對照實驗時務必加 FRESH=1,否則會誤續上一組的 checkpoint:
+#     sbatch --export=ALL,FRESH=1 job_scripts/train_h200.sh
 CKPT="$(ls -t lightning_logs/version_*/checkpoints/last.ckpt 2>/dev/null | head -1 || true)"
-if [ -n "$CKPT" ]; then
+if [ "${FRESH:-0}" = "1" ]; then
+    echo ">>> FRESH=1:強制全新訓練(忽略 ${CKPT:-無})"
+    EXTRA=()
+elif [ -n "$CKPT" ]; then
     echo ">>> 從 checkpoint 續訓: $CKPT"
     EXTRA=(--ckpt_path "$CKPT")
 else
