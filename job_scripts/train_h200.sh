@@ -76,8 +76,18 @@ else
     EXTRA=()
 fi
 
+# ---- 疊加式 config:對照實驗用 overlay 覆蓋部分設定,不必改 config.yaml ----
+# LightningCLI 會依序套用多個 --config,後者覆蓋前者。例:
+#     sbatch --export=ALL,FRESH=1,OVERLAY=experiments/diag_fp32.yaml job_scripts/train_h200.sh
+OVERLAY_ARGS=()
+if [ -n "${OVERLAY:-}" ]; then
+    [ -f "$OVERLAY" ] || { echo "!!! 找不到 overlay 檔: $OVERLAY"; exit 1; }
+    echo ">>> 疊加 overlay: $OVERLAY"
+    OVERLAY_ARGS=(--config "$OVERLAY")
+fi
+
 echo "=========================================="
-srun -n 8 python train.py fit --config config.yaml "${EXTRA[@]}"
+srun -n 8 python train.py fit --config config.yaml "${OVERLAY_ARGS[@]}" "${EXTRA[@]}"
 
 echo "=========================================="
 date
