@@ -1,0 +1,15 @@
+# 短診斷 B:學習率對照 —— 4e-4 → 5e-5,其餘全部不變(含 bf16)
+#
+#   srun -n 8 python train.py fit --config config.yaml --config experiments/diag_lr5e-5_short.yaml
+#
+# 目的:判斷降低 LR 能否抑制梯度爆炸。
+#   依 analysis/training_analysis.ipynb 圖 3,經驗穩定閾值 ≈ 6.06e-05。
+#   裁剪已飽和(95.6% 的步驟),故實際步長 = lr × clip_val,降 LR 直接縮小步長 8 倍。
+#
+# 與診斷 A 互為對照:兩者只差一個變數,可歸因。
+trainer:
+  max_steps: 13600
+  max_epochs: 30
+model:
+  optimizer_args:
+    lr: 0.00005

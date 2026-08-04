@@ -1,0 +1,15 @@
+# 短診斷 A:精度對照 —— bf16 → fp32,其餘全部不變(含 LR 4e-4)
+#
+#   srun -n 8 python train.py fit --config config.yaml --config experiments/diag_fp32.yaml
+#
+# 目的:判斷梯度爆炸是否由 bf16 造成。
+#   baseline(u/v, fp32)梯度中位數 0.28;本次(vt/vr, bf16)為 3.8e6。
+#   原始訓練在 step ~5,400 就開始失控,故 30 epochs(約 13,600 步)已足以判斷。
+#
+# 判讀:
+#   gradient_2norm 維持 O(1)  → bf16 是主因
+#   gradient_2norm 仍達 1e5+  → 不是 bf16,轉查 vt/vr 或 R=41
+trainer:
+  precision: '32'
+  max_steps: 13600
+  max_epochs: 30
