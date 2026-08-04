@@ -33,3 +33,7 @@ __pycache__/
 
 # 逐層梯度原始 CSV 46 MB;版控的是 step<=45000 的 gzip 版
 analysis/run_mine_per_layer.csv
+
+# 叢集 job log(scp 下來檢查用,非分析產物)
+analysis/job-*.out
+analysis/job-*.err
