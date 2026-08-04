@@ -35,6 +35,13 @@ echo "Job     : ${SLURM_JOB_ID:-NA}"
 echo "Node    : $(hostname)"
 echo "WorkDir : $(pwd)"
 
+# ---- 執行目錄:log 與 checkpoint 都寫在這裡下面的 lightning_logs/ ----
+# 並行跑多組實驗時每組給不同的 RUNDIR,否則兩個 job 會搶同一個 version 編號:
+#     sbatch --export=ALL,RUNDIR=runs/diag_fp32,OVERLAY=... job_scripts/train_h200.sh
+RUNDIR="${RUNDIR:-.}"
+mkdir -p "$RUNDIR"
+echo "RunDir  : $RUNDIR"
+
 # 模組名以本叢集 `ml avail` 為準(與 nano5 不同)
 module load miniconda3 || true          # 通常已預設載入
 module load gcc/11.5   || true
@@ -61,10 +68,10 @@ python -c "import torch;print('torch',torch.__version__,'| cuda',torch.cuda.is_a
     exit 1
 }
 
-# ---- 自動續訓:找最新的 last.ckpt ----
-# 換 overlay 做對照實驗時務必加 FRESH=1,否則會誤續上一組的 checkpoint:
+# ---- 自動續訓:在 RUNDIR 底下找最新的 last.ckpt ----
+# 沿用同一個 RUNDIR 卻換 overlay 時務必加 FRESH=1,否則會誤續上一組的 checkpoint:
 #     sbatch --export=ALL,FRESH=1 job_scripts/train_h200.sh
-CKPT="$(ls -t lightning_logs/version_*/checkpoints/last.ckpt 2>/dev/null | head -1 || true)"
+CKPT="$(ls -t "$RUNDIR"/lightning_logs/version_*/checkpoints/last.ckpt 2>/dev/null | head -1 || true)"
 if [ "${FRESH:-0}" = "1" ]; then
     echo ">>> FRESH=1:強制全新訓練(忽略 ${CKPT:-無})"
     EXTRA=()
@@ -87,7 +94,8 @@ if [ -n "${OVERLAY:-}" ]; then
 fi
 
 echo "=========================================="
-srun -n 8 python train.py fit --config config.yaml "${OVERLAY_ARGS[@]}" "${EXTRA[@]}"
+srun -n 8 python train.py fit --config config.yaml "${OVERLAY_ARGS[@]}" \
+     --trainer.default_root_dir "$RUNDIR" "${EXTRA[@]}"
 
 echo "=========================================="
 date

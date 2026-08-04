@@ -80,14 +80,56 @@ Run the test suite with `python -m pytest tests/ -v`.
 
 `config.yaml` is the baseline and should not be edited per experiment. LightningCLI
 merges multiple `--config` files, later overriding earlier, so each experiment is a
-small overlay under `experiments/` that records only its deltas:
+small overlay under `experiments/` that records only its deltas. The fully resolved
+configuration is written to `<rundir>/lightning_logs/version_*/config.yaml`, so every
+run is self-documenting and the baseline stays untouched.
+
+`job_scripts/train_h200.sh` takes three environment variables so that no experiment
+ever requires editing the script itself — an edited script leaves uncommitted local
+changes on the cluster and blocks the next `git pull`:
+
+| Variable  | Default | Purpose |
+|-----------|---------|---------|
+| `OVERLAY` | *(none)* | Extra `--config` layered on top of `config.yaml`. |
+| `RUNDIR`  | `.`      | Where `lightning_logs/` and checkpoints are written. |
+| `FRESH`   | `0`      | `1` ignores any existing `last.ckpt` and starts from scratch. |
 
 ```bash
-srun -n 8 python train.py fit --config config.yaml --config experiments/lr1e-4.yaml
+# Baseline, chained 48 h segments, auto-resuming from last.ckpt
+J1=$(sbatch --parsable job_scripts/train_h200.sh)
+J2=$(sbatch --parsable --dependency=afterany:$J1 job_scripts/train_h200.sh)
+
+# One experiment, isolated from the baseline's logs
+sbatch --export=ALL,RUNDIR=runs/lr5e-5,OVERLAY=experiments/lr5e-5.yaml \
+       job_scripts/train_h200.sh
 ```
 
-The fully resolved configuration is written to `lightning_logs/version_*/config.yaml`,
-so every run is self-documenting and the baseline stays untouched.
+Every run echoes `RunDir`, the resolved `CONDA_PREFIX`, the overlay and whether it
+resumed or started fresh at the top of `job_logs/job-<id>.out`. Check those three
+lines before letting a job burn allocation.
+
+#### Running several experiments in parallel
+
+Independent experiments can run concurrently — each job requests its own node, so
+two jobs cost the same total GPU-hours as running them back to back but finish in
+half the wall time. **Give each one a distinct `RUNDIR`**: Lightning picks its
+`version_N` directory by scanning for the highest existing number, so two jobs
+sharing a run directory will race and can collide on the same version.
+
+```bash
+sbatch --export=ALL,RUNDIR=runs/diag_fp32,OVERLAY=experiments/diag_fp32.yaml \
+       job_scripts/train_h200.sh
+sbatch --export=ALL,RUNDIR=runs/diag_lr5e-5,OVERLAY=experiments/diag_lr5e-5_short.yaml \
+       job_scripts/train_h200.sh
+```
+
+With separate run directories `FRESH=1` is redundant (the directory is empty), but
+it is harmless and worth keeping as a habit. Reuse of a single `RUNDIR` across
+different overlays is the one case where omitting it silently corrupts the
+comparison, because the second job resumes the first job's checkpoint.
+
+Note the training set is read-only and shared, so parallel jobs do not interfere
+through the data path; on separate nodes they simply each build their own page cache.
 
 ---
 
