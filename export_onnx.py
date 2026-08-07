@@ -95,7 +95,15 @@ def verify(output, model, sample):
     with torch.no_grad():
         ref_u, ref_s = model(*sample)
 
-    sess = ort.InferenceSession(output, providers=["CPUExecutionProvider"])
+    # Pin the thread count. Left to itself onnxruntime tries to set CPU affinity
+    # per thread, which fails under the cpuset restrictions of a cluster login
+    # node and floods stderr with pthread_setaffinity_np errors. Its own advice
+    # is to specify the count so affinity is never set. DLAMPty_inference already
+    # does this via cpu_num.
+    so = ort.SessionOptions()
+    so.intra_op_num_threads = min(8, os.cpu_count() or 1)
+    sess = ort.InferenceSession(output, sess_options=so,
+                                providers=["CPUExecutionProvider"])
     got_u, got_s = sess.run(None, {
         "input_upper": sample[0].numpy(),
         "input_surface": sample[1].numpy(),
