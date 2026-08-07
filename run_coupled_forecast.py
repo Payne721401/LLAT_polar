@@ -130,7 +130,7 @@ def outside_mask(n, radius_deg, resolution):
     return np.hypot(xx, yy) * resolution >= radius_deg
 
 
-def hold_boundary(up, sfc, up0, sfc0, mask):
+def hold_boundary(up, sfc, up0, sfc0, mask, n_coord=2):
     """Restore the outer ring from the initial condition.
 
     Standalone mode's substitute for a global model. LLAT is a limited-area
@@ -140,9 +140,19 @@ def hold_boundary(up, sfc, up0, sfc0, mask):
 
     It also repairs the corners. polar_to_latlon leaves everything outside the
     disc as NaN, and with no coupling nothing else would fill them back in.
+
+    The last `n_coord` surface channels - lon and lat - are deliberately left
+    alone. They are not weather, they ARE the moving frame: predict_one_step
+    rewrites the whole field as a uniform grid centred on the predicted
+    position, and the next step recovers the TC centre by averaging it. Freezing
+    part of that field mixes two different centres, and because both the frozen
+    and unfrozen sets are centrally symmetric, each contributes its own centre to
+    the mean - so the storm advances by only the unfrozen fraction of what the
+    model asked for. At the default radius that is 49 %: a storm moving at half
+    speed, with nothing to indicate it.
     """
     up[:, mask, :] = up0[:, mask, :]
-    sfc[mask, :] = sfc0[mask, :]
+    sfc[mask, :-n_coord] = sfc0[mask, :-n_coord]
     return up, sfc
 
 
@@ -221,8 +231,16 @@ def main(args):
 
     version = llat.model_setting['onnx_version']
     lat_max_i, lat_min_i, lon_min_i, lon_max_i = wp_indices()
-    edge = outside_mask(llat.cartesian_n, args.boundary_radius,
-                        llat.original_resolution)
+    # Standalone freezes its own, narrower ring. boundary_radius exists to match
+    # what the exchange replaces (8 deg), but there FCNV2 supplies evolving
+    # values, whereas freezing at the IC pins 51 % of the domain to t=0 and lets
+    # the boundary dominate the forecast.
+    hold_radius = args.hold_radius or args.boundary_radius
+    edge = outside_mask(llat.cartesian_n, hold_radius, llat.original_resolution)
+    if standalone:
+        frozen = 100 * edge.mean()
+        print(f"holding r >= {hold_radius:g} deg at the IC ({frozen:.0f}% of the "
+              "domain); lon/lat are excluded so the frame can still move")
 
     track = pd.read_csv(os.path.join(args.track_csv, f"{args.tc_id}.csv"))
     # FCNV2 steps 6 h, so only 00/12 UTC initial times line up with the cycle.
@@ -332,6 +350,12 @@ if __name__ == "__main__":
                    help="degrees; LLAT writes back inside this radius (two-way)")
     p.add_argument("--boundary-radius", type=float, default=8.0,
                    help="degrees; FCNV2 replaces LLAT outside this radius")
+    p.add_argument("--hold-radius", type=float, default=9.0,
+                   help="standalone only: freeze the IC beyond this radius in "
+                        "degrees. Narrower than --boundary-radius on purpose - "
+                        "a frozen ring does not evolve, so a wide one dominates "
+                        "the forecast. 23.4%% is the floor, the corners outside "
+                        "the polar disc, which have no model output at all")
     p.add_argument("--fcnv2-device", default="cuda")
     p.add_argument("--llat-device", default="cpu")
     p.add_argument("--start-index", type=int, default=0)

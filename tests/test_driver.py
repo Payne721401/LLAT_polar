@@ -117,22 +117,23 @@ def test_outside_mask_matches_the_coupling_radius():
 
 
 def test_hold_boundary_restores_only_the_ring():
-    """The interior must keep evolving; only the ring returns to the IC.
+    """The interior keeps evolving; only the ring returns to the IC.
 
-    Also the reason standalone mode does not produce NaN output: polar_to_latlon
-    leaves the corners NaN and, with no global model, this is the only thing that
-    fills them back in.
+    Also why standalone does not emit NaN: polar_to_latlon leaves the corners
+    NaN and, with no global model, this is the only thing that fills them in.
+    The coordinate channels are exempt and are never NaN here - predict_one_step
+    rewrites them as a complete uniform grid.
     """
     n = 81
     mask = rcf.outside_mask(n, 8.0, 0.25)
     up0 = np.zeros((13, n, n, 6))
     sfc0 = np.zeros((n, n, 20))
     up, sfc = np.ones_like(up0), np.ones_like(sfc0)
-    # Corners come back NaN from the polar round trip.
+    # Corners come back NaN from the polar round trip, weather channels only.
     corner = np.hypot(*np.meshgrid(np.arange(n) - 40.0, np.arange(n) - 40.0,
                                    indexing="ij")[::-1]) > 40
     up[:, corner, :] = np.nan
-    sfc[corner, :] = np.nan
+    sfc[corner, :-2] = np.nan
 
     up, sfc = rcf.hold_boundary(up, sfc, up0, sfc0, mask)
 
@@ -140,3 +141,52 @@ def test_hold_boundary_restores_only_the_ring():
     assert not np.isnan(sfc).any()
     np.testing.assert_array_equal(up[:, mask, :], 0.0)      # ring reset to IC
     np.testing.assert_array_equal(up[:, ~mask, :], 1.0)     # interior untouched
+
+
+def test_hold_boundary_leaves_the_coordinate_channels_alone():
+    """lon/lat must keep evolving even where the weather is frozen.
+
+    They are the moving frame, not weather: predict_one_step rewrites the whole
+    field as a uniform grid on the predicted centre, and the next step recovers
+    the centre by averaging it. Freezing part of it mixes two centres, and since
+    both the frozen and unfrozen sets are centrally symmetric each contributes
+    its own centre to the mean - so the storm advances by only the unfrozen
+    fraction. At the coupling radius that is 49 %: half speed, silently.
+    """
+    n = 81
+    mask = rcf.outside_mask(n, 8.0, 0.25)
+
+    def meshgrid_at(lon0, lat0):
+        return np.meshgrid(lon0 + (np.arange(n) - 40) * 0.25,
+                           lat0 - (np.arange(n) - 40) * 0.25)
+
+    sfc0 = np.zeros((n, n, 20))
+    sfc0[..., -2], sfc0[..., -1] = meshgrid_at(130.0, 15.0)      # IC centre
+    sfc = np.ones((n, n, 20))
+    sfc[..., -2], sfc[..., -1] = meshgrid_at(132.0, 15.0)        # moved 2 deg east
+
+    up = np.ones((13, n, n, 6))
+    up, sfc = rcf.hold_boundary(up, sfc, np.zeros_like(up), sfc0, mask)
+
+    # The centre must survive intact, not be dragged back toward the IC.
+    assert np.mean(sfc[..., -2]) == pytest.approx(132.0, abs=1e-9)
+    # Weather channels are still frozen.
+    np.testing.assert_array_equal(sfc[mask, 0], 0.0)
+    np.testing.assert_array_equal(sfc[~mask, 0], 1.0)
+
+
+def test_freezing_lonlat_would_halve_the_motion():
+    """Negative control: the defect this guards against, and its size.
+
+    Without it the test above cannot show it measures anything.
+    """
+    n = 81
+    mask = rcf.outside_mask(n, 8.0, 0.25)
+    lon_ic = 130.0 + (np.arange(n) - 40) * 0.25
+    lon_new = 132.0 + (np.arange(n) - 40) * 0.25
+    field = np.tile(lon_new, (n, 1))
+    field[mask] = np.tile(lon_ic, (n, 1))[mask]          # the old behaviour
+
+    moved = np.mean(field) - 130.0
+    assert 0.9 < moved < 1.1, moved                      # 2 deg asked, ~1 delivered
+    assert mask.mean() == pytest.approx(0.512, abs=0.01)
