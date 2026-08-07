@@ -1,0 +1,66 @@
+# Environment for INFERENCE only. For training use conda_env.yaml.
+#
+# Difference from the training environment: no lightning, timm, tensorboard or
+# jsonargparse (training only), and no xESMF, which CLAUDE.md records as a zombie
+# dependency with poor platform support. It also uses CPU onnxruntime rather than
+# onnxruntime-gpu: the regional model runs on CPU, and the GPU build additionally
+# has to match the CUDA/cuDNN versions or it silently falls back to CPU anyway.
+#
+#   conda env create -f env_building/inference_env.yaml -p ~/envs/llat_infer
+#   conda activate ~/envs/llat_infer
+#
+# Verify before trusting it. utils/data_processor.py opens utils/land.nc and
+# imports metpy, pysolar and xarray_regrid at module import time (CLAUDE.md
+# landmine 7), so this one line exercises the whole dependency chain:
+#
+#   python -c "from DLAMPty_inference import DLAMPty_model; print('ok')"
+#
+# ---------------------------------------------------------------------------
+# Lower-risk alternative
+# ---------------------------------------------------------------------------
+# If a working environment already exists on the machine, clone it instead of
+# resolving a fresh one. On the lab host the `dlamp` environment already has
+# torch 2.9.1+cu128 (CUDA available), onnxruntime 1.23.2, numpy 2.2.6, scipy,
+# pandas, xarray and netCDF4, and has actually run this workflow:
+#
+#   conda create -p ~/envs/llat_infer --clone dlamp
+#   conda activate ~/envs/llat_infer
+#   pip install metpy pysolar xarray-regrid
+#
+# That leaves the original untouched while guaranteeing the versions match what
+# is known to work. This file exists so the requirements are written down and a
+# clean environment can be built anywhere, not because it is the safer route.
+#
+# Note this file has not been resolved on the target machine; treat the first
+# `conda env create` as something to check, not to trust.
+name: llat_infer
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11          # <3.12 for the match statements in the training code
+  - pip
+
+  # --- regional model (LLAT) -----------------------------------------------
+  # Runs through onnxruntime; torch is not needed for LLAT itself.
+  - numpy>=2.0
+  - scipy
+  - pandas
+  - xarray
+  - netcdf4
+  - bottleneck
+  - pyyaml
+
+  # --- imported by utils/data_processor at module import time ---------------
+  - metpy
+  - pysolar
+
+  # --- global model (FCNV2) -------------------------------------------------
+  # Only needed for --mode one-way / two-way; standalone mode never imports it.
+  # Pulls a CUDA build on Linux; the driver on the lab host reports CUDA 13.0,
+  # which runs a 12.x runtime fine since NVIDIA drivers are backward compatible.
+  - pytorch
+  - cuda-version=12.8
+
+  - pip:
+      - onnxruntime
+      - xarray-regrid

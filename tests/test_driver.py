@@ -97,3 +97,46 @@ def test_coupling_info_exposes_uv_names():
 def test_coupling_root_validation(tmp_path):
     with pytest.raises(FileNotFoundError, match="coupling repo"):
         rcf.add_coupling_repo(str(tmp_path))
+
+
+def test_outside_mask_matches_the_coupling_radius():
+    """The frozen ring must line up with the radius the exchange would replace.
+
+    The exchange masks on dis_grid >= polar_bdy_mask_radius in DEGREES, with
+    dis_grid = hypot(dx, dy) * 0.25. Standalone mode has to freeze exactly that
+    region, or the two modes would not be comparable.
+    """
+    n, radius, res = 81, 8.0, 0.25
+    mask = rcf.outside_mask(n, radius, res)
+
+    xx, yy = np.meshgrid(np.arange(n), np.arange(n))
+    expected = np.sqrt(((xx - 40) * res) ** 2 + ((yy - 40) * res) ** 2) >= radius
+    np.testing.assert_array_equal(mask, expected)
+    assert not mask[40, 40]                       # the centre is never frozen
+    assert mask[0, 0] and mask[-1, -1]            # corners always are
+
+
+def test_hold_boundary_restores_only_the_ring():
+    """The interior must keep evolving; only the ring returns to the IC.
+
+    Also the reason standalone mode does not produce NaN output: polar_to_latlon
+    leaves the corners NaN and, with no global model, this is the only thing that
+    fills them back in.
+    """
+    n = 81
+    mask = rcf.outside_mask(n, 8.0, 0.25)
+    up0 = np.zeros((13, n, n, 6))
+    sfc0 = np.zeros((n, n, 20))
+    up, sfc = np.ones_like(up0), np.ones_like(sfc0)
+    # Corners come back NaN from the polar round trip.
+    corner = np.hypot(*np.meshgrid(np.arange(n) - 40.0, np.arange(n) - 40.0,
+                                   indexing="ij")[::-1]) > 40
+    up[:, corner, :] = np.nan
+    sfc[corner, :] = np.nan
+
+    up, sfc = rcf.hold_boundary(up, sfc, up0, sfc0, mask)
+
+    assert not np.isnan(up).any(), "the frozen ring should have cleared every NaN"
+    assert not np.isnan(sfc).any()
+    np.testing.assert_array_equal(up[:, mask, :], 0.0)      # ring reset to IC
+    np.testing.assert_array_equal(up[:, ~mask, :], 1.0)     # interior untouched
