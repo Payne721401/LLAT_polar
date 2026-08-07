@@ -35,28 +35,54 @@ import os
 
 import numpy as np
 
-# 13 pressure levels, as in every model card here.
+# Fallback channel order, used only when a run predates run_meta.yaml.
+# run_coupled_forecast writes that file precisely so this does not have to be
+# trusted: indexing by position means a changed model card would otherwise shift
+# every field by one, and nothing would look wrong.
 LEVELS = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
-# Surface channel order (18 physical + lon + lat appended by ingest_space_info).
 SFC = ['u10', 'v10', 't2m', 'd2m', 'msl', 'sp', 'tcwv', 'tp', 'mtnlwrf',
        'sst_filled', 'f', 'solar', 'hgt', 'landmask', 'diurnal_sin',
        'diurnal_cos', 'doy_sin', 'doy_cos', 'lon', 'lat']
 UPPER = ['u', 'v', 't', 'q', 'z', 'w']
 
 
+def read_meta(run_dir):
+    """Channel layout for a run, from its run_meta.yaml when there is one."""
+    import yaml
+
+    p = os.path.join(os.path.expanduser(run_dir), 'run_meta.yaml')
+    if not os.path.exists(p):
+        print(f"  note: {os.path.basename(run_dir)} has no run_meta.yaml, "
+              "assuming the default channel order")
+        return dict(surface_vars=SFC, upper_vars=UPPER, pressure_levels=LEVELS)
+    with open(p, encoding='utf-8') as f:
+        m = yaml.safe_load(f)
+    return dict(surface_vars=m['surface_vars'], upper_vars=m['upper_vars'],
+                pressure_levels=m['pressure_levels'])
+
+
 class Field:
     """One experiment at one valid time, addressed by variable name."""
 
-    def __init__(self, upper, sfc):
+    def __init__(self, upper, sfc, meta=None):
+        meta = meta or dict(surface_vars=SFC, upper_vars=UPPER, pressure_levels=LEVELS)
         self.upper, self.sfc = upper, sfc
-        self.lon = sfc[..., SFC.index('lon')]
-        self.lat = sfc[..., SFC.index('lat')]
+        self.sfc_names = list(meta['surface_vars'])
+        self.upper_names = list(meta['upper_vars'])
+        self.levels = list(meta['pressure_levels'])
+        if len(self.sfc_names) != sfc.shape[-1]:
+            raise ValueError(
+                f"run_meta lists {len(self.sfc_names)} surface channels but the "
+                f"array has {sfc.shape[-1]}")
+        self.lon = sfc[..., self.sfc_names.index('lon')]
+        self.lat = sfc[..., self.sfc_names.index('lat')]
 
     def s(self, name):
-        return self.sfc[..., SFC.index(name)]
+        return self.sfc[..., self.sfc_names.index(name)]
 
     def u(self, name, level):
-        return self.upper[LEVELS.index(level), :, :, UPPER.index(name)]
+        return self.upper[self.levels.index(level), :, :,
+                          self.upper_names.index(name)]
 
     def vorticity(self, level):
         """Relative vorticity dv/dx - du/dy on the lat/lon grid.
@@ -73,14 +99,31 @@ class Field:
         return np.gradient(v, axis=1) / dx - np.gradient(u, axis=0) / dy
 
 
-def load_run(run_dir, lead):
-    d = os.path.join(os.path.expanduser(run_dir), 'DLAMPty', 'forecast')
+def forecast_dir(run_dir):
+    return os.path.join(os.path.expanduser(run_dir), 'DLAMPty', 'forecast')
+
+
+def available_leads(run_dir):
+    """Forecast hours actually present, so --lead need not be guessed."""
+    import glob
+    import re
+
+    out = []
+    for f in glob.glob(os.path.join(forecast_dir(run_dir), 'output_sfc_*h.npy')):
+        m = re.search(r'output_sfc_(\d+)h\.npy$', f)
+        if m:
+            out.append(int(m.group(1)))
+    return sorted(out)
+
+
+def load_run(run_dir, lead, meta=None):
+    d = forecast_dir(run_dir)
     up = np.load(os.path.join(d, f"output_upper_{lead:0>3}h.npy"))
     sfc = np.load(os.path.join(d, f"output_sfc_{lead:0>3}h.npy"))
-    return Field(up, sfc)
+    return Field(up, sfc, meta)
 
 
-def load_era5(era5_dir, tc_id, valid_time, n):
+def load_era5(era5_dir, tc_id, valid_time, n, meta=None):
     """Truth from the combined.nc at the valid time, cropped to the model domain."""
     import xarray as xr
 
@@ -92,11 +135,13 @@ def load_era5(era5_dir, tc_id, valid_time, n):
             oy, ox = (ny - n) // 2, (nx - n) // 2
             ds = ds.isel(latitude=np.arange(oy, oy + n),
                          longitude=np.arange(ox, ox + n))
-        up = np.stack([np.squeeze(ds[v].values) for v in UPPER], axis=-1)
-        sfc = np.stack([np.squeeze(ds[v].values) for v in SFC[:-2]], axis=-1)
+        names = (meta or {}).get('surface_vars', SFC)
+        upper_names = (meta or {}).get('upper_vars', UPPER)
+        up = np.stack([np.squeeze(ds[v].values) for v in upper_names], axis=-1)
+        sfc = np.stack([np.squeeze(ds[v].values) for v in names[:-2]], axis=-1)
         lon, lat = np.meshgrid(ds.longitude.values, ds.latitude.values)
         sfc = np.concatenate([sfc, lon[..., None], lat[..., None]], axis=-1)
-    return Field(up, sfc)
+    return Field(up, sfc, meta)
 
 
 # Each panel: (row label, what to shade, colormap, how to draw the wind).
@@ -199,14 +244,24 @@ def main(args):
     import matplotlib.pyplot as plt
 
     init = datetime.datetime.strptime(args.init, "%Y%m%d%H")
-    valid = init + datetime.timedelta(hours=args.lead)
-
-    columns = []
     runs = [r.split('=', 1) for r in args.run]
-    n = load_run(runs[0][1], args.lead).sfc.shape[0]
+    metas = [read_meta(path) for _, path in runs]
+
+    leads = available_leads(runs[0][1])
+    if args.lead is None:
+        print(f"forecast hours present in {runs[0][0]}: "
+              + ", ".join(str(h) for h in leads))
+        return
+    if args.lead not in leads:
+        raise SystemExit(f"+{args.lead} h is not in this run; available: {leads}")
+
+    valid = init + datetime.timedelta(hours=args.lead)
+    columns = [(name, load_run(path, args.lead, meta))
+               for (name, path), meta in zip(runs, metas)]
     if args.era5:
-        columns.append(("ERA5", load_era5(args.era5, args.tc_id, valid, n)))
-    columns += [(name, load_run(path, args.lead)) for name, path in runs]
+        n = columns[0][1].sfc.shape[0]
+        columns.insert(0, ("ERA5", load_era5(args.era5, args.tc_id, valid, n,
+                                             metas[0])))
 
     panels = [PANELS[i] for i in args.panels] if args.panels else PANELS
     nrow, ncol = len(panels), len(columns)
@@ -255,13 +310,16 @@ if __name__ == "__main__":
                    help="directory of {TC_ID}_{time}_combined.nc, adds a truth column")
     p.add_argument("--tc-id", required=True)
     p.add_argument("--init", required=True, help="YYYYMMDDHH")
-    p.add_argument("--lead", type=int, required=True, help="forecast hour")
+    p.add_argument("--lead", type=int, default=None,
+                   help="forecast hour; omit to list what the run contains")
     p.add_argument("--out", default="forecast.png")
     p.add_argument("--panels", type=int, nargs="*", default=None,
                    help=f"subset of rows 0..{len(PANELS)-1}; default all")
-    p.add_argument("--mask-radius", type=float, default=9.5,
-                   help="blank beyond this radius in degrees. The default trims "
-                        "the outermost ring, which is the least constrained part "
-                        "of the polar grid; 0 disables")
+    p.add_argument("--mask-radius", type=float, default=0.0,
+                   help="blank beyond this radius in degrees; 0 (the default) "
+                        "shows everything the model produced. A default that "
+                        "hid the outermost ring - the least constrained part of "
+                        "the polar grid - would make the model look better than "
+                        "it is, so trimming is opt-in: 9.5 for presentation")
     p.add_argument("--dpi", type=int, default=150)
     main(p.parse_args())

@@ -123,3 +123,72 @@ def test_panels_are_well_formed():
         assert p['wind'][0] in ('stream', 'quiver'), p['label']
         # A symmetric colour scale and a zero anchor are contradictory.
         assert not (p.get('sym') and p.get('zero_based')), p['label']
+
+
+# --------------------------------------------------------------------------
+# run_meta.yaml removes the need to trust the hardcoded order
+# --------------------------------------------------------------------------
+
+def test_field_uses_the_channel_order_it_is_given():
+    """A run whose channels are in a different order must still read correctly.
+
+    This is the whole point of run_meta.yaml: the arrays are bare npy, so
+    without it every consumer has to assume a layout, and a model card change
+    would shift every field by one with nothing looking wrong.
+    """
+    swapped = list(pf.SFC)
+    swapped[4], swapped[6] = swapped[6], swapped[4]      # msl <-> tcwv
+    meta = dict(surface_vars=swapped, upper_vars=pf.UPPER,
+                pressure_levels=pf.LEVELS)
+
+    sfc = np.zeros((N, N, len(pf.SFC)))
+    sfc[..., 4] = 7.0            # position 4 now holds tcwv
+    sfc[..., 6] = 9.0            # position 6 now holds msl
+    lon2d, lat2d = grid()
+    sfc[..., swapped.index('lon')] = lon2d
+    sfc[..., swapped.index('lat')] = lat2d
+    up = np.zeros((len(pf.LEVELS), N, N, len(pf.UPPER)))
+
+    f = pf.Field(up, sfc, meta)
+    assert f.s('tcwv')[0, 0] == 7.0
+    assert f.s('msl')[0, 0] == 9.0
+    # Without the meta the same array would be read the other way round.
+    assert pf.Field(up, sfc).s('msl')[0, 0] == 7.0
+
+
+def test_field_rejects_a_meta_that_does_not_match_the_array():
+    meta = dict(surface_vars=pf.SFC[:-1], upper_vars=pf.UPPER,
+                pressure_levels=pf.LEVELS)
+    with pytest.raises(ValueError, match="surface channels"):
+        pf.Field(np.zeros((13, N, N, 6)), np.zeros((N, N, len(pf.SFC))), meta)
+
+
+def test_read_meta_round_trips(tmp_path):
+    import yaml
+
+    meta = dict(surface_vars=pf.SFC, upper_vars=pf.UPPER,
+                pressure_levels=pf.LEVELS, onnx_version="x", mode="standalone")
+    (tmp_path / "run_meta.yaml").write_text(yaml.safe_dump(meta), encoding="utf-8")
+    got = pf.read_meta(str(tmp_path))
+    assert got['surface_vars'] == pf.SFC
+    assert got['upper_vars'] == pf.UPPER
+    assert got['pressure_levels'] == pf.LEVELS
+
+
+def test_read_meta_falls_back_when_absent(tmp_path):
+    got = pf.read_meta(str(tmp_path))
+    assert got['surface_vars'] == pf.SFC
+
+
+def test_mask_radius_defaults_to_showing_everything():
+    """The default must not hide the outermost ring.
+
+    That ring is the least constrained part of the polar grid and the place the
+    known artefacts live, so a default that trimmed it would make the model look
+    better than it is. Trimming is opt-in.
+    """
+    import argparse
+    import inspect
+
+    src = inspect.getsource(pf)
+    assert '"--mask-radius", type=float, default=0.0' in src

@@ -146,6 +146,37 @@ def hold_boundary(up, sfc, up0, sfc0, mask):
     return up, sfc
 
 
+def write_run_meta(path, llat, args, init):
+    """Record what produced this run, next to the output it produced.
+
+    Without it, anything reading the npy has to hardcode the channel order,
+    which then silently shifts by one the day a model card changes - rainfall
+    plotted as total column water, with nothing to indicate it. The names stored
+    are the EXTERNAL ones, matching what is actually in the arrays.
+    """
+    import yaml as _yaml
+
+    meta = dict(
+        model_yaml=os.path.abspath(args.model_yaml),
+        onnx_version=llat.model_setting['onnx_version'],
+        mode=args.mode,
+        tc_id=args.tc_id,
+        init=init.strftime('%Y%m%d%H'),
+        hours=args.hours,
+        step_hours=3,
+        upper_vars=list(llat.upper_variables_external),
+        surface_vars=list(llat.surface_variables_external) + ['lon', 'lat'],
+        pressure_levels=list(llat.pressure_levels),
+        cartesian_n=llat.cartesian_n,
+        resolution=llat.original_resolution,
+        polar_shape=list(llat.polar_shape),
+        r_degree_max=llat.r_degree_max,
+        boundary_radius=args.boundary_radius,
+    )
+    with open(os.path.join(path, 'run_meta.yaml'), 'w', encoding='utf-8') as f:
+        _yaml.safe_dump(meta, f, sort_keys=False, allow_unicode=True)
+
+
 def coupling_info(llat):
     """The variable lists the exchange helper needs.
 
@@ -224,6 +255,7 @@ def main(args):
         base = os.path.join(run_root, f"start_from_{stamp}")
         llat_dir = os.path.join(base, 'DLAMPty', 'forecast')
         os.makedirs(llat_dir, exist_ok=True)
+        write_run_meta(base, llat, args, initial_time)
         if not standalone:
             fcnv2_dir = os.path.join(base, 'FCNV2', 'forecast')
             os.makedirs(fcnv2_dir, exist_ok=True)
