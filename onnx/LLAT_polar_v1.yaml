@@ -1,6 +1,16 @@
 # ## best
+# 學姊的極座標 baseline(R=201,Δr 0.05°,u/v 風分量)
 onnx_version: LLATty_polar_v1
 onnx_path: onnx/LLATty_polar_v1.onnx
+
+# ── 極座標網格 ────────────────────────────────────────────────────
+# 這三個值【必須】與訓練時的 config.yaml 相同;其餘(r_max 格數、
+# 笛卡兒域邊長、取樣中心)由 DLAMPty_inference 推導,不再硬編碼。
+polar:
+  data_spatial_shape: [13, 201, 180]   # (Z, R, Theta)
+  r_degree_max: 10                     # 半徑上限,單位【度】
+  original_resolution: 0.25            # 來源解析度,單位【度/格】
+  wind_representation: uv              # 笛卡兒分量,不需反向旋轉
 
 upper_vars: ['u', 'v', 't', 'q', 'z', 'w']
 surface_vars: ['u10', 'v10', 't2m', 'd2m', 'msl', 'sp', 'tcwv', 'tp', 'mtnlwrf', 'sst_filled', 'f', 'solar', 'hgt', 'landmask', 'diurnal_sin', 'diurnal_cos', 'doy_sin', 'doy_cos']

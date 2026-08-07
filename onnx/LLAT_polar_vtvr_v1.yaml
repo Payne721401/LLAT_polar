@@ -1,0 +1,46 @@
+# LLAT polar — vt/vr 版(R=41,Δr 對齊 ERA5 來源解析度)
+#
+# 對應訓練:config.yaml(bf16-mixed + LR 5e-5 + max_steps 105000)
+#           最佳 checkpoint vl0.2499700
+#
+# ⚠️ polar 區塊的三個值【必須】與訓練時的 config.yaml 逐字相同,
+#    否則模型在推論時看到的幾何和訓練時不一樣,結果一定錯而且不會報錯。
+#    其餘參數(r_max 的格數、笛卡兒域邊長、取樣中心)全部由這三個值推導,
+#    不要另外硬編碼 —— 這正是 S2 要修掉的問題。
+onnx_version: LLAT_polar_vtvr_v1
+onnx_path: onnx/LLAT_polar_vtvr_v1.onnx
+
+# ── 極座標網格 ────────────────────────────────────────────────────
+polar:
+  # (Z, R, Theta);抄自 config.yaml 的 data.data_spatial_shape
+  data_spatial_shape: [13, 41, 180]
+  # 極座標半徑上限,單位【度】;抄自 config.yaml 的 data.r_degree_max
+  r_degree_max: 10
+  # 來源資料解析度,單位【度/格】;抄自 config.yaml 的 data.original_resolution
+  original_resolution: 0.25
+  # 風的表示法:'uv' = 笛卡兒分量,'vt_vr' = 切向/徑向。
+  # vt_vr 需要在 polar_to_latlon 之後做反向旋轉才能餵回 FCNV2(S4),
+  # 尚未實作 —— 目前載入這份 yaml 會在 initialize() 明確報錯,
+  # 而不是靜默產生物理上錯誤的風場。
+  wind_representation: vt_vr
+
+# ── 變數表 ────────────────────────────────────────────────────────
+# 與笛卡兒版【只差風的表示法】:u,v → vt,vr;u10,v10 → vt10,vr10
+upper_vars: ['vt', 'vr', 't', 'q', 'z', 'w']
+surface_vars: ['vt10', 'vr10', 't2m', 'd2m', 'msl', 'sp', 'tcwv', 'tp', 'mtnlwrf', 'sst_filled', 'f', 'solar', 'hgt', 'landmask', 'diurnal_sin', 'diurnal_cos', 'doy_sin', 'doy_cos']
+pressure_levels: [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
+# True ⇒ Dataset 會自動在 surface 後面追加 lon、lat 兩層(共 20 通道)
+ingest_space_info: True
+
+upper_units: ["m/s", "m/s", "K", "kg kg**-1", "m**2 s**-2", "Pa s**-1"]
+surface_units: ["m/s", "m/s", "K", "K", "Pa", "Pa", "kg m**-2", "m", 'W m**-2', 'K', '1/s', 'W m**-2', 'm', '1', '1', '1', '1', '1']
+
+# ── 標準化統計 ────────────────────────────────────────────────────
+# 由 tools/compute_vtvr_stats.py 產生:在原統計檔上【只新增】vt/vr/vt10/vr10,
+# 其餘 31 個變數逐一比對 ratio = 1.0(未更動)。
+stat_mean_file: utils/stat_mean_vtvr.nc
+stat_std_file: utils/stat_std_vtvr.nc
+stat_mean_upper_file:
+stat_std_upper_file:
+stat_mean_sfc_file:
+stat_std_sfc_file:

@@ -207,7 +207,11 @@ def polar_to_latlon(
 class DLAMPty_model:
     def __init__(self, model_path, root_dir=os.path.dirname(__file__), device=None, cpu_num=10 ):
         self.model_path = model_path
-        self.model_setting = yaml.safe_load(open(self.model_path))
+        # 明確指定 utf-8:open() 不帶 encoding 會用系統預設,在中文 Windows 上
+        # 是 cp950,讀到含非 ASCII 註解的 yaml 會 UnicodeDecodeError。
+        # 叢集(Linux/UTF-8)上不會發作,所以這是只在本機重現的可攜性問題。
+        with open(self.model_path, encoding='utf-8') as f:
+            self.model_setting = yaml.safe_load(f)
         self.root_dir = root_dir
         self.device = device
         self.cpu_num = cpu_num
@@ -223,7 +227,66 @@ class DLAMPty_model:
         self.pressure_levels = self.model_setting['pressure_levels']
         self.upper_units = self.model_setting['upper_units']
         self.surface_units = self.model_setting['surface_units']
-        
+
+        self._setup_polar_grid()
+
+    def _setup_polar_grid(self):
+        """由 yaml 的 `polar` 區塊推導所有極座標參數(S2)。
+
+        設計原則:**yaml 只放訓練 config.yaml 裡真實存在的三個值**,
+        其餘一律推導。這樣改網格時只要改 yaml 的三行,不必動任何程式,
+        也不可能出現「改了 R 卻忘了改 r_max」這種半套修改。
+
+            data_spatial_shape [Z, R, Theta]   ← config.yaml: data.data_spatial_shape
+            r_degree_max                       ← config.yaml: data.r_degree_max
+            original_resolution                ← config.yaml: data.original_resolution
+
+        推導出來的量:
+            polar_R / polar_theta  極座標網格數
+            r_max_px               半徑上限,換算成【格】(latlon_to_polar 用格)
+            cartesian_n            笛卡兒域邊長,與訓練端 _trim_var 同一條公式
+            center_xy              取樣中心 = 笛卡兒域正中央
+        """
+        polar = self.model_setting.get('polar')
+        if polar is None:
+            raise KeyError(
+                f"{self.model_path} 缺少 `polar:` 區塊。極座標推論必須明確宣告網格,"
+                "否則會沿用寫死的 R=201/Theta=180/r_max=40,對其他網格的模型"
+                "會 shape mismatch(或更糟:形狀碰巧對得上但幾何錯誤)。"
+            )
+
+        shape = list(polar['data_spatial_shape'])
+        if len(shape) != 3:
+            raise ValueError(f"data_spatial_shape 應為 [Z, R, Theta],得到 {shape}")
+        self.polar_shape = tuple(shape)
+        self.polar_R, self.polar_theta = shape[1], shape[2]
+
+        self.r_degree_max = float(polar['r_degree_max'])
+        self.original_resolution = float(polar['original_resolution'])
+        self.wind_representation = polar.get('wind_representation', 'uv')
+
+        # 半徑上限換算成「格」。訓練端 datasets.py 寫的是 `r_degree_max * 4`,
+        # 那個 4 是寫死的 1/0.25 —— 換 0.1° 資料就會錯。這裡用除法,正確且通用。
+        self.r_max_px = self.r_degree_max / self.original_resolution
+
+        # 笛卡兒域邊長。與訓練端 datasets._trim_var 的公式一致:
+        #     int(r_degree_max * 2 / original_resolution) + 1
+        self.cartesian_n = int(self.r_degree_max * 2 / self.original_resolution) + 1
+
+        # 取樣中心 = 笛卡兒域正中央(TC 在 Lagrangian 網格上恆在此)
+        half = (self.cartesian_n - 1) / 2.0
+        self.center_xy = (half, half)
+
+        # lonlat_uniformizer 重建座標軸時用的間距,就是來源解析度。
+        # __init__ 裡原本寫死 0.25,和 original_resolution 是同一件事 —— 統一由此決定。
+        self.specify_resolution = self.original_resolution
+
+        if abs(self.r_max_px - half) > 1e-9:
+            raise ValueError(
+                f"半徑上限({self.r_max_px} 格)與笛卡兒域半寬({half} 格)不一致。"
+                "極座標圓應恰好內接於方形域,請檢查 r_degree_max 與 original_resolution。"
+            )
+
     def _stat_from_nc(self, nc_file_path: str, want_sfc: bool) -> np.ndarray:
         """
         Args:
@@ -282,9 +345,45 @@ class DLAMPty_model:
         return model
     
     def initialize(self):
-        self.model = self.load_model() 
+        if self.wind_representation == 'vt_vr':
+            raise NotImplementedError(
+                f"{self.model_path} 宣告 wind_representation: vt_vr,但 polar_to_latlon "
+                "目前只做內插、沒有做向量旋轉(S4)。切向/徑向風被當純量搬回經緯度網格,"
+                "送進 FCNV2 的會是物理上錯誤的風場。實作反向旋轉之後再移除此檢查:\n"
+                "    u = -vt*sin(theta) + vr*cos(theta)\n"
+                "    v =  vt*cos(theta) + vr*sin(theta)"
+            )
+        self.model = self.load_model()
+        self._check_onnx_shape()
         self.load_statistics()
-        print("Model and weights are loaded.")
+        print(f"Model and weights are loaded. "
+              f"polar grid (Z,R,Theta)={self.polar_shape}, "
+              f"r_max={self.r_max_px:g} px ({self.r_degree_max:g} deg), "
+              f"cartesian {self.cartesian_n}x{self.cartesian_n}")
+
+    def _check_onnx_shape(self):
+        """比對 yaml 宣告的極座標網格與 onnx 實際期望的輸入形狀。
+
+        沒有這個檢查,網格不合會等到第一次 model.run() 才炸(訊息還很難讀);
+        更糟的是若形狀碰巧相容但幾何不同(例如 R 對了但 r_degree_max 錯),
+        永遠不會報錯,只會安靜地輸出錯誤結果。
+        """
+        want = {'input_upper': (self.polar_shape[0], self.polar_R, self.polar_theta,
+                                len(self.upper_variables)),
+                'input_surface': (self.polar_R, self.polar_theta,
+                                  len(self.surface_variables)
+                                  + (2 if self.ingest_space_info else 0))}
+        for inp in self.model.get_inputs():
+            if inp.name not in want:
+                continue
+            # onnx 的第 0 維是 batch,可能是動態的(字串);只比對其後各維
+            got = tuple(d for d in inp.shape[1:] if isinstance(d, int))
+            exp = want[inp.name]
+            if len(got) == len(exp) and got != exp:
+                raise ValueError(
+                    f"{inp.name} 形狀不合:onnx 期望 {got},但 yaml 的 polar 區塊"
+                    f"推導出 {exp}。請確認 {self.model_path} 的 data_spatial_shape / "
+                    f"變數表與訓練時的 config.yaml 一致。")
         
     def normalize(self, upper_data, surface_data, reverse=False):
         if reverse:
@@ -297,8 +396,19 @@ class DLAMPty_model:
         
     def predict_one_step(self, input_upper, input_surface):
         
-        input_upper, _, _ = latlon_to_polar(input_upper,  R=201, Theta=180, r_max=40)
-        input_surface, _, _ = latlon_to_polar(input_surface,  R=201, Theta=180, r_max=40)
+        # 形狀先驗證再轉換:笛卡兒域邊長由 r_degree_max/original_resolution 推導,
+        # 對不上代表 IC 的裁切範圍與訓練時不同,再往下跑只會得到錯誤結果。
+        n = self.cartesian_n
+        if input_surface.shape[:2] != (n, n) or input_upper.shape[1:3] != (n, n):
+            raise ValueError(
+                f"輸入的笛卡兒網格應為 {n}x{n}(由 r_degree_max={self.r_degree_max:g} 度 / "
+                f"original_resolution={self.original_resolution:g} 度推導),"
+                f"實際拿到 upper {input_upper.shape}、surface {input_surface.shape}。")
+
+        polar_kw = dict(R=self.polar_R, Theta=self.polar_theta,
+                        r_max=self.r_max_px, center_xy=self.center_xy)
+        input_upper, _, _ = latlon_to_polar(input_upper, **polar_kw)
+        input_surface, _, _ = latlon_to_polar(input_surface, **polar_kw)
         input_upper,input_surface = self.normalize(input_upper,input_surface)
         input_upper = np.expand_dims(input_upper, axis=0)
         input_surface = np.expand_dims(input_surface, axis=0)
@@ -321,8 +431,11 @@ class DLAMPty_model:
         #    耦合會把 LLAT 的場貼到全球網格偏西 3,300 km 的位置。
         #    NaN 不會傳染:latlon_to_polar 只取樣 r ≤ r_max(碰不到角落),
         #    LLAT→FCNV2 只讀 r < 7.5°,而 FCNV2→LLAT 反而會把角落補回來。
-        output_upper = polar_to_latlon(output_upper, output_shape=(81, 81), r_max=40.0, center_xy=(40.0, 40.0), mode="bilinear", fill_value=np.nan)
-        output_surface = polar_to_latlon(output_surface, output_shape=(81, 81), r_max=40.0, center_xy=(40.0, 40.0), mode="bilinear", fill_value=np.nan)
+        back_kw = dict(output_shape=(self.cartesian_n, self.cartesian_n),
+                       r_max=self.r_max_px, center_xy=self.center_xy,
+                       mode="bilinear", fill_value=np.nan)
+        output_upper = polar_to_latlon(output_upper, **back_kw)
+        output_surface = polar_to_latlon(output_surface, **back_kw)
 
         # uniform lat lon
         if self.uniformize_lonlat:
