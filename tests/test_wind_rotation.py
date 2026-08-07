@@ -234,13 +234,64 @@ def test_external_names_are_uv():
     assert m2.surface_variables_external == m2.surface_variables
 
 
-def test_missing_convention_blocks_initialize():
-    """The shipped vt/vr yaml leaves wind_convention unset on purpose."""
+def test_missing_convention_blocks_initialize(tmp_path):
+    """An undeclared convention must block loading, not be guessed.
+
+    Getting it wrong produces a mirrored or rotated wind field and raises
+    nothing, so refusing to start is the only safe default.
+    """
+    import os
+
+    import yaml as _yaml
+    from DLAMPty_inference import DLAMPty_model
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = _yaml.safe_load(open(os.path.join(root, "onnx", "LLAT_polar_vtvr_v1.yaml"),
+                               encoding="utf-8"))
+    cfg["polar"]["wind_convention"] = None
+    p = tmp_path / "no_conv.yaml"
+    p.write_text(_yaml.safe_dump(cfg, allow_unicode=True), encoding="utf-8")
+
+    m = DLAMPty_model(str(p), root_dir=root)
+    assert m.wind_convention is None
+    with pytest.raises(ValueError, match="wind_convention"):
+        m.initialize()
+
+
+def test_shipped_vtvr_yaml_declares_a_measured_convention():
+    """The shipped card must name a convention, and a valid one.
+
+    Measured 2026-08-07 against 202022W_2020103118_170kt_combined.nc: RMSE was
+    exactly 0.0000 m/s for both the surface and the upper-air pair, versus 10.7
+    and 12.4 m/s for the runners-up, and the two levels agreed. Re-run
+    tools/verify_vtvr_convention.py if the dataset is ever regenerated.
+    """
     import os
     from DLAMPty_inference import DLAMPty_model
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     m = DLAMPty_model(os.path.join(root, "onnx", "LLAT_polar_vtvr_v1.yaml"), root_dir=root)
-    assert m.wind_convention is None
-    with pytest.raises(ValueError, match="wind_convention"):
-        m.initialize()
+    assert m.wind_convention == "ccw_inward_flip"
+    assert m.wind_convention in WIND_CONVENTIONS
+
+
+def test_measured_convention_matches_the_documented_formula():
+    """Pin the actual arithmetic, not just the label.
+
+    The yaml comment states
+        vt =  u*sin(theta) + v*cos(theta)
+        vr = -u*cos(theta) + v*sin(theta)
+    which, with ERA5's descending latitude, means vt positive counter-clockwise
+    and vr positive INWARD. If someone edits WIND_CONVENTIONS the label could
+    survive while the formula changes underneath it.
+    """
+    theta = THETA_RAD
+    rng = np.random.default_rng(7)
+    u = rng.normal(size=(R, THETA))
+    v = rng.normal(size=(R, THETA))
+
+    arr = np.stack([u, v], axis=-1)
+    rotate_polar_wind(arr, theta, 0, 1, "ccw_inward_flip", inverse=False)
+
+    np.testing.assert_allclose(arr[..., 0], u * np.sin(theta) + v * np.cos(theta), atol=1e-12)
+    np.testing.assert_allclose(arr[..., 1], -u * np.cos(theta) + v * np.sin(theta), atol=1e-12)
