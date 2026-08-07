@@ -56,6 +56,15 @@ def check_against_yaml(model, yaml_path):
     if polar is None:
         raise KeyError(f"{yaml_path} has no `polar:` block")
 
+    # The two ends deliberately keep different surface lists. `ingest_space_info`
+    # makes the Dataset (and the inference wrapper) append lon/lat, so the yaml
+    # carries the 18 physical variables while the model - and therefore the
+    # checkpoint's hyperparameters - was built with all 20. Compare like with
+    # like, or this rejects every correctly configured model.
+    expected_sfc = list(card['surface_vars'])
+    if card.get('ingest_space_info'):
+        expected_sfc += ['lon', 'lat']
+
     problems = []
     if list(polar['data_spatial_shape']) != list(hp.data_spatial_shape):
         problems.append(f"data_spatial_shape: yaml {polar['data_spatial_shape']} "
@@ -63,9 +72,11 @@ def check_against_yaml(model, yaml_path):
     if list(card['upper_vars']) != list(hp.upper_vars):
         problems.append(f"upper_vars: yaml {card['upper_vars']} "
                         f"vs checkpoint {list(hp.upper_vars)}")
-    if list(card['surface_vars']) != list(hp.surface_vars):
-        problems.append(f"surface_vars: yaml {card['surface_vars']} "
-                        f"vs checkpoint {list(hp.surface_vars)}")
+    if expected_sfc != list(hp.surface_vars):
+        problems.append(
+            f"surface_vars: yaml {card['surface_vars']}"
+            f"{' + [lon, lat] from ingest_space_info' if card.get('ingest_space_info') else ''}"
+            f" vs checkpoint {list(hp.surface_vars)}")
     if problems:
         raise ValueError(
             f"{yaml_path} does not describe this checkpoint:\n  "
