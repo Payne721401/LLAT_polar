@@ -298,8 +298,7 @@ class DLAMPty_model:
     def predict_one_step(self, input_upper, input_surface):
         
         input_upper, _, _ = latlon_to_polar(input_upper,  R=201, Theta=180, r_max=40)
-        input_surface, _, _ = latlon_to_polar(input_surface,  R=201, Theta=180, r_max=40)   
-        print(np.mean(input_surface[:, :, -2]), np.mean(input_surface[:, :, -1]))
+        input_surface, _, _ = latlon_to_polar(input_surface,  R=201, Theta=180, r_max=40)
         input_upper,input_surface = self.normalize(input_upper,input_surface)
         input_upper = np.expand_dims(input_upper, axis=0)
         input_surface = np.expand_dims(input_surface, axis=0)
@@ -316,21 +315,26 @@ class DLAMPty_model:
 
         # reverse back
         output_upper, output_surface = self.normalize(output_upper,output_surface,reverse=True)
-        output_upper = polar_to_latlon(output_upper, output_shape=(81, 81), r_max=40.0, center_xy=(40.0, 40.0), mode="bilinear", fill_value=0.0)
-        output_surface = polar_to_latlon(output_surface, output_shape=(81, 81), r_max=40.0, center_xy=(40.0, 40.0), mode="bilinear", fill_value=0.0)
-        
+        # ⚠️ 圓外(方形的四個角,佔 23.4%)沒有模型輸出,必須填 NaN 而非 0。
+        #    填 0 的後果(B1→B2):lon 通道被 0 稀釋成 0.766 倍,
+        #    lonlat_uniformizer 算出的中心從 130°E 變成 99.6°E ——
+        #    耦合會把 LLAT 的場貼到全球網格偏西 3,300 km 的位置。
+        #    NaN 不會傳染:latlon_to_polar 只取樣 r ≤ r_max(碰不到角落),
+        #    LLAT→FCNV2 只讀 r < 7.5°,而 FCNV2→LLAT 反而會把角落補回來。
+        output_upper = polar_to_latlon(output_upper, output_shape=(81, 81), r_max=40.0, center_xy=(40.0, 40.0), mode="bilinear", fill_value=np.nan)
+        output_surface = polar_to_latlon(output_surface, output_shape=(81, 81), r_max=40.0, center_xy=(40.0, 40.0), mode="bilinear", fill_value=np.nan)
+
         # uniform lat lon
         if self.uniformize_lonlat:
             lon, lat = lonlat_uniformizer(
-            output_surface[:, :, -2],
-            output_surface[:, :, -1],
-            self.uniformize_lonlat,
-            self.specify_resolution,
-        )
-        
-        (output_surface[:, :, -2], output_surface[:, :, -1]) = np.meshgrid(lon, lat)
-        print(np.mean(output_surface[:, :, -2]), np.mean(output_surface[:, :, -1]))
-        
+                output_surface[:, :, -2],
+                output_surface[:, :, -1],
+                self.uniformize_lonlat,
+                self.specify_resolution,
+            )
+            # B6:這行原本縮排在 if 之外,uniformize_lonlat=False 時
+            #     lon/lat 未定義會 NameError。移進區塊內。
+            (output_surface[:, :, -2], output_surface[:, :, -1]) = np.meshgrid(lon, lat)
 
         return output_upper, output_surface
     

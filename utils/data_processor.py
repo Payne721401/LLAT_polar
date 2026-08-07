@@ -152,19 +152,28 @@ def lonlat_uniformizer(
     lat : np.ndarray
         A 1D array of latitude values.
     """
+    # ⚠️ 全面使用 nanmean(B2 修正,2026-08-07)
+    # 極座標推論時 polar_to_latlon 會把「圓外的四個角落」標成 NaN(佔 23.4%)。
+    # 若這裡用一般的 mean,NaN 會讓整條計算失效;而先前用 fill_value=0 時,
+    # 平均會被 0 稀釋成 0.766 倍 —— 中心 130°E 會被算成 99.6°E(偏 3,300 km)。
+    # 笛卡兒路徑沒有 NaN,nanmean 與 mean 等價,故此改動向後相容。
     # original lon and lat axis values
-    lon = raw_lon.mean(0)
-    lat = raw_lat.mean(1)
+    lon = np.nanmean(raw_lon, axis=0)
+    lat = np.nanmean(raw_lat, axis=1)
 
     if uniformize_lonlat:
         # calc the average of resolution of raw_lat
         # these step also make sure the direction of lat and lon is the same with the direction of raw_lat and raw_lon
+        # ⚠️ 這兩個 mean 同樣【必須】是 nanmean:它們的值只被用來判斷座標軸的
+        #    「方向」(見下方 specify_resolution 分支)。留著 NaN 會讓
+        #    `specify_resolution * lon_res >= 0` 恆為 False → 經度軸被整個反向,
+        #    而且不會有任何錯誤訊息。
         lat_diff = np.diff(raw_lat, axis=0).flatten()
-        lat_res = lat_diff.mean()
+        lat_res = np.nanmean(lat_diff)
 
         # calc the average of resolution of raw_lon
         lon_diff = np.diff(raw_lon, axis=1).flatten()
-        lon_res = lon_diff.mean()
+        lon_res = np.nanmean(lon_diff)
 
         if isinstance(specify_resolution, tuple):
             if specify_resolution[0] == 0:
@@ -189,16 +198,19 @@ def lonlat_uniformizer(
             else:
                 lat_res = specify_resolution * -1
         else:
+            # 這一支在 specify_resolution 為 falsy 時才走(極座標推論路徑給的是
+            # 0.25,所以走不到)。一併改成 nan-aware,避免日後有人關掉
+            # specify_resolution 時踩到同一個坑。
             vaild_lat_diff = lat_diff[
-                (np.abs(lat_diff - np.mean(lat_diff)) < 2 * np.std(lat_diff))
+                (np.abs(lat_diff - np.nanmean(lat_diff)) < 2 * np.nanstd(lat_diff))
             ]
             if len(vaild_lat_diff) > 0:
-                lat_res = vaild_lat_diff.mean()
+                lat_res = np.nanmean(vaild_lat_diff)
             vaild_lon_diff = lon_diff[
-                (np.abs(lon_diff - np.mean(lon_diff)) < 2 * np.std(lon_diff))
+                (np.abs(lon_diff - np.nanmean(lon_diff)) < 2 * np.nanstd(lon_diff))
             ]
             if len(vaild_lon_diff) > 0:
-                lon_res = vaild_lon_diff.mean()
+                lon_res = np.nanmean(vaild_lon_diff)
         # print(f"lat_res: {lat_res}")
         # print(f"lon_res: {lon_res}")
 
@@ -209,8 +221,10 @@ def lonlat_uniformizer(
         #     lon_res = 0.25
 
         # locate the center
-        lat_center = lat.mean()
-        lon_center = lon.mean()
+        # ⚠️ 這兩行就是「颱風中心在哪」的最終答案 —— 耦合時 FCNV2 就是靠它
+        #    決定要把 LLAT 的場貼到全球網格的哪個位置。必須跳過 NaN。
+        lat_center = np.nanmean(lat)
+        lon_center = np.nanmean(lon)
         # calc the length of lat and lon
         half_lat_length = np.floor(len(raw_lat[:, 0]) / 2)
         half_lon_length = np.floor(len(raw_lon[0, :]) / 2)
