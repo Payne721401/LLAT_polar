@@ -138,7 +138,35 @@ def load_era5(era5_dir, tc_id, valid_time, n, meta=None):
         names = (meta or {}).get('surface_vars', SFC)
         upper_names = (meta or {}).get('upper_vars', UPPER)
         up = np.stack([np.squeeze(ds[v].values) for v in upper_names], axis=-1)
-        sfc = np.stack([np.squeeze(ds[v].values) for v in names[:-2]], axis=-1)
+
+        # A combined.nc holds raw ERA5. The derived channels - landmask, f,
+        # solar, sst_filled, the time encodings - are produced by
+        # calc_additional_vars during the forecast and are simply absent here.
+        # Rather than run that (it regrids a global land mask and evaluates
+        # solar position per point), take what exists and leave the rest NaN;
+        # of the derived fields only landmask is used for plotting, and that
+        # can be recovered exactly, see below.
+        shape = np.squeeze(ds[upper_names[0]].values).shape[-2:]
+        missing = []
+        cols = []
+        for v in names[:-2]:
+            if v in ds:
+                cols.append(np.squeeze(ds[v].values))
+            else:
+                missing.append(v)
+                cols.append(np.full(shape, np.nan))
+        sfc = np.stack(cols, axis=-1)
+
+        # ERA5 sst is undefined over land, so its missing-value mask IS the land
+        # mask - at the source resolution and exactly aligned, with no regridding.
+        if 'landmask' in missing and 'sst' in ds:
+            sfc[..., names.index('landmask')] = np.isnan(
+                np.squeeze(ds['sst'].values)).astype(float)
+            missing.remove('landmask')
+        if missing:
+            print(f"  note: ERA5 file has no {', '.join(missing)}; "
+                  "left blank (derived during the forecast, not stored)")
+
         lon, lat = np.meshgrid(ds.longitude.values, ds.latitude.values)
         sfc = np.concatenate([sfc, lon[..., None], lat[..., None]], axis=-1)
     return Field(up, sfc, meta)
@@ -228,9 +256,12 @@ def draw(fig, ax, field, panel, radius, vlim, first_col, quiver_scale):
         ax.clabel(cs, inline=True, fontsize=6, fmt='%d')
 
     # Coastline straight from the forecast's own land mask: no external file,
-    # and it can never be misaligned with the data.
-    ax.contour(lon, lat, field.s('landmask'), levels=[0.5],
-               colors='darkslategray', linewidths=1.0)
+    # and it can never be misaligned with the data. Skipped rather than faked
+    # when a column has no mask at all.
+    land = field.s('landmask')
+    if not np.all(np.isnan(land)):
+        ax.contour(lon, lat, np.nan_to_num(land), levels=[0.5],
+                   colors='darkslategray', linewidths=1.0)
 
     ax.set_aspect('equal')
     if first_col:
