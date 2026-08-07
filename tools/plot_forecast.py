@@ -1,0 +1,267 @@
+"""Compare forecasts side by side: one column per experiment, one row per field.
+
+A rewrite of the lab's kong_Rey_animation_4plots notebook, which grew into a
+personal workspace: nineteen cells, around thirty absolute paths, and branches
+for DA cycling, nudging and conference figures interleaved with the comparison
+itself. The panels it draws are worth keeping; the surrounding machinery is not.
+
+Differences that matter
+-----------------------
+Self-contained. Coastlines come from the `landmask` channel that every forecast
+already carries, so there is no coastline file to locate and the outline is by
+construction aligned with the data. No cartopy either - the domain is 20x20
+degrees, where a plate-carree axis is just a lat/lon axis.
+
+pcolormesh, never contourf. contourf interpolates between real values and fill
+values, inventing smooth rainbow structure across the boundary of the polar disc
+that does not exist in the data.
+
+NaN is drawn as blank. Outside the polar disc the model has no output; plotting
+it as 0 is what made earlier figures look like they had a bad outer ring.
+
+Usage
+-----
+    python tools/plot_forecast.py \
+        --run "LLAT polar=~/LLAT_polar_runs/202421W/2_way_circle_couple_model_LLAT_polar_vtvr_v1/start_from_2024102500" \
+        --era5 /wk2/yungyun/FCNV2_TC/202421W/ERA5/for_DLAMPty \
+        --tc-id 202421W --init 2024102500 --lead 24 \
+        --out fig_024h.png
+
+--run may be repeated to add columns. --era5 adds a truth column first.
+"""
+import argparse
+import datetime
+import os
+
+import numpy as np
+
+# 13 pressure levels, as in every model card here.
+LEVELS = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
+# Surface channel order (18 physical + lon + lat appended by ingest_space_info).
+SFC = ['u10', 'v10', 't2m', 'd2m', 'msl', 'sp', 'tcwv', 'tp', 'mtnlwrf',
+       'sst_filled', 'f', 'solar', 'hgt', 'landmask', 'diurnal_sin',
+       'diurnal_cos', 'doy_sin', 'doy_cos', 'lon', 'lat']
+UPPER = ['u', 'v', 't', 'q', 'z', 'w']
+
+
+class Field:
+    """One experiment at one valid time, addressed by variable name."""
+
+    def __init__(self, upper, sfc):
+        self.upper, self.sfc = upper, sfc
+        self.lon = sfc[..., SFC.index('lon')]
+        self.lat = sfc[..., SFC.index('lat')]
+
+    def s(self, name):
+        return self.sfc[..., SFC.index(name)]
+
+    def u(self, name, level):
+        return self.upper[LEVELS.index(level), :, :, UPPER.index(name)]
+
+    def vorticity(self, level):
+        """Relative vorticity dv/dx - du/dy on the lat/lon grid.
+
+        Spacing is taken from the coordinate channels rather than assumed, so
+        this stays correct if the domain resolution ever changes. The cos(lat)
+        factor matters at these latitudes: one degree of longitude is about 4%
+        shorter at 20N than at the equator.
+        """
+        u, v = self.u('u', level), self.u('v', level)
+        m_per_deg = 111_320.0
+        dy = np.gradient(self.lat, axis=0) * m_per_deg
+        dx = np.gradient(self.lon, axis=1) * m_per_deg * np.cos(np.deg2rad(self.lat))
+        return np.gradient(v, axis=1) / dx - np.gradient(u, axis=0) / dy
+
+
+def load_run(run_dir, lead):
+    d = os.path.join(os.path.expanduser(run_dir), 'DLAMPty', 'forecast')
+    up = np.load(os.path.join(d, f"output_upper_{lead:0>3}h.npy"))
+    sfc = np.load(os.path.join(d, f"output_sfc_{lead:0>3}h.npy"))
+    return Field(up, sfc)
+
+
+def load_era5(era5_dir, tc_id, valid_time, n):
+    """Truth from the combined.nc at the valid time, cropped to the model domain."""
+    import xarray as xr
+
+    p = os.path.join(os.path.expanduser(era5_dir),
+                     f"{tc_id}_{valid_time:%Y%m%d%H}_combined.nc")
+    with xr.open_dataset(p) as ds:
+        ny, nx = ds.sizes['latitude'], ds.sizes['longitude']
+        if (ny, nx) != (n, n):
+            oy, ox = (ny - n) // 2, (nx - n) // 2
+            ds = ds.isel(latitude=np.arange(oy, oy + n),
+                         longitude=np.arange(ox, ox + n))
+        up = np.stack([np.squeeze(ds[v].values) for v in UPPER], axis=-1)
+        sfc = np.stack([np.squeeze(ds[v].values) for v in SFC[:-2]], axis=-1)
+        lon, lat = np.meshgrid(ds.longitude.values, ds.latitude.values)
+        sfc = np.concatenate([sfc, lon[..., None], lat[..., None]], axis=-1)
+    return Field(up, sfc)
+
+
+# Each panel: (row label, what to shade, colormap, how to draw the wind).
+# Kept as data so adding or reordering rows needs no code change.
+PANELS = [
+    dict(label="10 m wind + MSLP",
+         shade=lambda f: np.hypot(f.s('u10'), f.s('v10')),
+         cmap="YlGnBu", unit="m s$^{-1}$",
+         zero_based=True,
+         wind=('stream', lambda f: (f.s('u10'), f.s('v10'))),
+         contour=lambda f: f.s('msl') / 100.0),
+    dict(label="Precipitation",
+         shade=lambda f: f.s('tp') * 1000.0,
+         cmap="GnBu", unit="mm", zero_based=True,
+         wind=('quiver', lambda f: (f.s('u10'), f.s('v10')))),
+    dict(label="850 hPa vorticity",
+         shade=lambda f: f.vorticity(850) * 1e5,
+         cmap="RdBu_r", unit="10$^{-5}$ s$^{-1}$", sym=True,
+         wind=('quiver', lambda f: (f.u('u', 850), f.u('v', 850)))),
+    dict(label="700 hPa omega",
+         shade=lambda f: f.u('w', 700),
+         cmap="BrBG", unit="Pa s$^{-1}$", sym=True,
+         wind=('stream', lambda f: (f.u('u', 700), f.u('v', 700)))),
+    dict(label="500 hPa wind + TCWV",
+         shade=lambda f: f.s('tcwv'),
+         cmap="YlGnBu", unit="kg m$^{-2}$",
+         wind=('stream', lambda f: (f.u('u', 500), f.u('v', 500)))),
+]
+
+
+def mask_outside(field, arr, radius_deg):
+    """Blank everything beyond radius_deg of the domain centre."""
+    if not radius_deg:
+        return arr
+    n = arr.shape[0]
+    c = (n - 1) / 2.0
+    yy, xx = np.meshgrid(np.arange(n) - c, np.arange(n) - c, indexing='ij')
+    res = abs(float(field.lon[0, 1] - field.lon[0, 0]))
+    out = np.array(arr, dtype=float)
+    out[np.hypot(xx, yy) * res > radius_deg] = np.nan
+    return out
+
+
+def draw(fig, ax, field, panel, radius, vlim, first_col, quiver_scale):
+    lon, lat = field.lon, field.lat
+    z = mask_outside(field, panel['shade'](field), radius)
+
+    kw = dict(cmap=panel['cmap'], shading='auto')
+    if panel.get('sym'):
+        kw.update(vmin=vlim[0], vmax=vlim[1])
+    else:
+        # Anchor at zero only where zero is meaningful (wind speed, rainfall).
+        # Forcing it on a field with a large baseline - TCWV sits around
+        # 50 kg m^-2 - spends the whole colour range on values that never occur
+        # and renders every panel the same shade.
+        kw.update(vmin=0 if panel.get('zero_based') else vlim[0], vmax=vlim[1])
+    mesh = ax.pcolormesh(lon, lat, z, **kw)
+
+    kind, get = panel['wind']
+    u, v = (mask_outside(field, a, radius) for a in get(field))
+    if kind == 'stream':
+        # streamplot requires strictly increasing coordinates, but latitude
+        # descends with row index here (the ERA5 convention this project
+        # inherits), so the rows are flipped for the call. pcolormesh above has
+        # no such constraint, which is why only this branch needs it.
+        y = lat[:, 0]
+        us, vs = np.nan_to_num(u), np.nan_to_num(v)
+        if y[0] > y[-1]:
+            y, us, vs = y[::-1], us[::-1], vs[::-1]
+        # streamplot also cannot integrate across NaN; the zeros above are only
+        # for the integration, the shading still shows those cells as blank.
+        ax.streamplot(lon[0, :], y, us, vs,
+                      color='0.25', linewidth=0.6, density=0.9, arrowsize=0.7)
+    else:
+        k = (slice(None, None, 4), slice(None, None, 4))
+        # Scale from the row's own wind speed so arrows stay legible whatever
+        # the level and variable; a fixed scale suits one panel and ruins others.
+        ax.quiver(lon[k], lat[k], u[k], v[k], scale=quiver_scale, width=0.004,
+                  color='0.25')
+
+    if panel.get('contour') is not None:
+        c = mask_outside(field, panel['contour'](field), radius)
+        cs = ax.contour(lon, lat, c, levels=8, colors='k', linewidths=0.6)
+        ax.clabel(cs, inline=True, fontsize=6, fmt='%d')
+
+    # Coastline straight from the forecast's own land mask: no external file,
+    # and it can never be misaligned with the data.
+    ax.contour(lon, lat, field.s('landmask'), levels=[0.5],
+               colors='darkslategray', linewidths=1.0)
+
+    ax.set_aspect('equal')
+    if first_col:
+        ax.set_ylabel(panel['label'], fontsize=9)
+    return mesh
+
+
+def main(args):
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    init = datetime.datetime.strptime(args.init, "%Y%m%d%H")
+    valid = init + datetime.timedelta(hours=args.lead)
+
+    columns = []
+    runs = [r.split('=', 1) for r in args.run]
+    n = load_run(runs[0][1], args.lead).sfc.shape[0]
+    if args.era5:
+        columns.append(("ERA5", load_era5(args.era5, args.tc_id, valid, n)))
+    columns += [(name, load_run(path, args.lead)) for name, path in runs]
+
+    panels = [PANELS[i] for i in args.panels] if args.panels else PANELS
+    nrow, ncol = len(panels), len(columns)
+    fig, axes = plt.subplots(nrow, ncol, figsize=(3.6 * ncol, 3.2 * nrow),
+                             squeeze=False)
+
+    for r, panel in enumerate(panels):
+        # One colour scale per row, so columns are actually comparable. Using
+        # each panel's own range would make a weaker forecast look identical to
+        # a stronger one.
+        vals = np.concatenate([mask_outside(f, panel['shade'](f), args.mask_radius).ravel()
+                               for _, f in columns])
+        lo, hi = (float(np.nanpercentile(vals, 1)), float(np.nanpercentile(vals, 99)))
+        if panel.get('sym'):
+            hi = max(hi, abs(lo)); lo = -hi
+        vlim = (lo, hi)
+        # One arrow scale per row, for the same reason as the colour scale.
+        speeds = np.concatenate([
+            np.hypot(*[mask_outside(f, a, args.mask_radius)
+                       for a in panel['wind'][1](f)]).ravel() for _, f in columns])
+        qscale = max(float(np.nanpercentile(speeds, 98)), 1e-6) * 20
+
+        for c, (name, f) in enumerate(columns):
+            ax = axes[r][c]
+            mesh = draw(fig, ax, f, panel, args.mask_radius, vlim, c == 0, qscale)
+            if r == 0:
+                ax.set_title(name, fontsize=11)
+            if c == ncol - 1:
+                cb = fig.colorbar(mesh, ax=axes[r], fraction=0.025, pad=0.01)
+                cb.set_label(panel['unit'], fontsize=8)
+            if r != nrow - 1:
+                ax.set_xticklabels([])
+
+    fig.suptitle(f"{args.tc_id}  init {init:%Y-%m-%d %H}Z  "
+                 f"+{args.lead:03d} h  valid {valid:%Y-%m-%d %H}Z", fontsize=12)
+    fig.savefig(args.out, dpi=args.dpi, bbox_inches='tight', facecolor='white')
+    print(f"wrote {args.out}  ({nrow} rows x {ncol} columns)")
+
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--run", action="append", required=True, metavar="NAME=PATH",
+                   help="a start_from_* directory; repeat to add columns")
+    p.add_argument("--era5", default=None,
+                   help="directory of {TC_ID}_{time}_combined.nc, adds a truth column")
+    p.add_argument("--tc-id", required=True)
+    p.add_argument("--init", required=True, help="YYYYMMDDHH")
+    p.add_argument("--lead", type=int, required=True, help="forecast hour")
+    p.add_argument("--out", default="forecast.png")
+    p.add_argument("--panels", type=int, nargs="*", default=None,
+                   help=f"subset of rows 0..{len(PANELS)-1}; default all")
+    p.add_argument("--mask-radius", type=float, default=9.5,
+                   help="blank beyond this radius in degrees. The default trims "
+                        "the outermost ring, which is the least constrained part "
+                        "of the polar grid; 0 disables")
+    p.add_argument("--dpi", type=int, default=150)
+    main(p.parse_args())
