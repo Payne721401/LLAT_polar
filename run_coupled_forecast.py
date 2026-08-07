@@ -54,12 +54,21 @@ import argparse
 import datetime
 import os
 import sys
+import warnings
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 
 from DLAMPty_inference import DLAMPty_model
+
+# pysolar re-emits these for every grid point of every step, burying real output
+# in thousands of identical lines. Neither affects the result: the leap-second
+# table stops in 2023 (worth well under a second of solar position), and the
+# timezone notice is about numpy datetimes being naive, which they are by
+# construction here since everything is UTC.
+warnings.filterwarnings("ignore", message=".*leap seconds after.*")
+warnings.filterwarnings("ignore", message=".*no explicit representation of timezones.*")
 
 # Sub-domain of the global grid that gets saved, as index bounds on the standard
 # 721x1440 (0.25 deg) FCNV2 grid. Western North Pacific: 10S-80N, 80E-180E.

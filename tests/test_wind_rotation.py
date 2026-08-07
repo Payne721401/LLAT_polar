@@ -295,3 +295,50 @@ def test_measured_convention_matches_the_documented_formula():
 
     np.testing.assert_allclose(arr[..., 0], u * np.sin(theta) + v * np.cos(theta), atol=1e-12)
     np.testing.assert_allclose(arr[..., 1], -u * np.cos(theta) + v * np.sin(theta), atol=1e-12)
+
+
+def test_additional_vars_recomputed_with_external_names():
+    """changing_additional_information must pass u/v names, not vt/vr.
+
+    By the time it runs, predict_one_step has already rotated the wind back to
+    u/v, and calc_additional_vars looks channels up as ds.u / ds.v. Passing the
+    model's own names raised
+
+        AttributeError: 'Dataset' object has no attribute 'u'
+
+    partway into the first forecast step. Intercepting the call keeps this a
+    millisecond-scale unit test: actually running the recomputation would regrid
+    a global land mask and evaluate solar position per grid point.
+    """
+    import os
+
+    import DLAMPty_inference as di
+    from DLAMPty_inference import DLAMPty_model
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    m = DLAMPty_model(os.path.join(root, "onnx", "LLAT_polar_vtvr_v1.yaml"),
+                      root_dir=root)
+
+    seen = {}
+    original = di.recalc_additional_np
+
+    def spy(upper, sfc, t, upper_vars, surface_vars, *a, **kw):
+        seen['upper'] = list(upper_vars)
+        seen['surface'] = list(surface_vars)
+        return {}                       # nothing to write back
+
+    di.recalc_additional_np = spy
+    try:
+        n = m.cartesian_n
+        m.changing_additional_information(
+            np.zeros((13, n, n, len(m.upper_variables))),
+            np.zeros((n, n, len(m.surface_variables) + 2)),
+            "2024-10-25T03:00:00")
+    finally:
+        di.recalc_additional_np = original
+
+    assert seen['upper'][:2] == ['u', 'v'], seen['upper'][:2]
+    assert seen['surface'][:2] == ['u10', 'v10'], seen['surface'][:2]
+    # Everything after the wind pair is untouched, so positions still line up.
+    assert seen['upper'][2:] == m.upper_variables[2:]
+    assert seen['surface'][2:] == m.surface_variables[2:]

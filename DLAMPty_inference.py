@@ -615,21 +615,28 @@ class DLAMPty_model:
         return output_upper, output_surface
     
     def changing_additional_information(self, input_upper, input_surface, timestep):
+        # External names throughout. By this point predict_one_step has already
+        # rotated the wind back to u/v, and calc_additional_vars looks channels
+        # up as ds.u / ds.v, so passing the model's own vt/vr names raises
+        # AttributeError: 'Dataset' object has no attribute 'u'. Positions are
+        # identical between the two lists, so the index lookups below are
+        # unaffected; only the labels differ.
         additionals = recalc_additional_np(
                 input_upper, input_surface, timestep,
-                self.upper_variables, self.surface_variables, self.upper_units, self.surface_units
+                self.upper_variables_external, self.surface_variables_external,
+                self.upper_units, self.surface_units
             )
 
-        for v in self.surface_variables:
+        for v in self.surface_variables_external:
             if v in additionals:
-                i = self.surface_variables.index(v)
+                i = self.surface_variables_external.index(v)
                 input_surface[:, :, i] = additionals[v]
 
-        for v in self.upper_variables:
+        for v in self.upper_variables_external:
             if v in additionals:
-                i = self.upper_variables.index(v)
+                i = self.upper_variables_external.index(v)
                 input_upper[:, :, :, i] = additionals[v]
-        
+
         return input_upper, input_surface
     
     def IC_from_xarray_to_npy(self, IC_dataset:xr.Dataset, additional_vars=False):
