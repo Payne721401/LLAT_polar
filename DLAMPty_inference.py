@@ -204,12 +204,102 @@ def polar_to_latlon(
 
     return cartesian
 
+
+# ---------------------------------------------------------------------------
+# Tangential / radial wind (S4)
+# ---------------------------------------------------------------------------
+# The model works in vt/vr while FCNV2, the saved output and the plotting code
+# all use u/v, so the wrapper has to rotate on the way in and on the way out.
+#
+# Rotation is done in POLAR space, where theta is exact per column. Doing it
+# after polar_to_latlon would mean interpolating vt/vr, whose meaning depends on
+# theta, across neighbouring azimuths - correct only in the limit of fine dtheta.
+# Interpolating u/v instead is exact everywhere, so rotate first, interpolate
+# second.
+#
+# The sign convention cannot be derived from first principles here. The dataset
+# ships vt/vr precomputed and this project never produced them, and there are
+# several independent places to get a sign wrong: whether the row index runs
+# north-to-south (ERA5 latitude is usually descending, which flips the sense of
+# theta), whether vt is positive counter-clockwise, and whether vr is positive
+# outward. So the convention is declared in the model yaml and determined
+# empirically by tools/verify_vtvr_convention.py.
+#
+# Parameterisation. With theta the azimuth used by latlon_to_polar
+# (x = cx + r*cos(theta), y = cy + r*sin(theta)) the forward transform is
+#
+#     vt = p*u*sin(theta) + q*v*cos(theta)
+#     vr = s*u*cos(theta) + t*v*sin(theta)
+#
+# with p, q, s, t in {+1, -1}. Orthogonality (rows of the 2x2 matrix must be
+# perpendicular for every theta) requires p*s == -q*t, which leaves 8 valid
+# combinations. Because the matrix is orthogonal its inverse is its transpose:
+#
+#     u = p*vt*sin(theta) + s*vr*cos(theta)
+#     v = q*vt*cos(theta) + t*vr*sin(theta)
+WIND_CONVENTIONS = {
+    # name: (p, q, s, t)
+    'ccw_outward':      (-1,  1,  1,  1),   # vt CCW positive, vr outward positive
+    'ccw_inward':       (-1,  1, -1, -1),
+    'cw_outward':       ( 1, -1,  1,  1),
+    'cw_inward':        ( 1, -1, -1, -1),
+    # The four below differ by the sense of theta itself, which is what a
+    # north-to-south row ordering produces.
+    'ccw_outward_flip': ( 1,  1,  1, -1),
+    'ccw_inward_flip':  ( 1,  1, -1,  1),
+    'cw_outward_flip':  (-1, -1,  1, -1),
+    'cw_inward_flip':   (-1, -1, -1,  1),
+}
+
+
+def _check_orthogonal(coeffs):
+    p, q, s, t = coeffs
+    if p * s != -q * t:
+        raise ValueError(
+            f"wind convention {coeffs} is not orthogonal (needs p*s == -q*t); "
+            "it would not be invertible and would not preserve wind speed.")
+
+
+def rotate_polar_wind(polar, theta_rad, i_a, i_b, convention, inverse):
+    """Rotate a wind pair in place inside a polar array.
+
+    Args:
+        polar: (..., R, Theta, V) array; modified in place.
+        theta_rad: (Theta,) azimuths, as returned by latlon_to_polar.
+        i_a, i_b: channel indices. Forward they are (u, v); inverse (vt, vr).
+        convention: key of WIND_CONVENTIONS.
+        inverse: False for u,v -> vt,vr; True for vt,vr -> u,v.
+
+    Returns:
+        The same array, for chaining.
+    """
+    p, q, s, t = WIND_CONVENTIONS[convention]
+    _check_orthogonal((p, q, s, t))
+    sin_t = np.sin(theta_rad)[None, :]          # broadcast over R
+    cos_t = np.cos(theta_rad)[None, :]
+
+    a = polar[..., i_a].copy()
+    b = polar[..., i_b].copy()
+    if inverse:                                  # (vt, vr) -> (u, v)
+        polar[..., i_a] = p * a * sin_t + s * b * cos_t
+        polar[..., i_b] = q * a * cos_t + t * b * sin_t
+    else:                                        # (u, v) -> (vt, vr)
+        polar[..., i_a] = p * a * sin_t + q * b * cos_t
+        polar[..., i_b] = s * a * cos_t + t * b * sin_t
+    return polar
+
+
+# Model-internal name -> the name the rest of the world uses.
+_WIND_ALIAS = {'vt': 'u', 'vr': 'v', 'vt10': 'u10', 'vr10': 'v10'}
+
+
 class DLAMPty_model:
     def __init__(self, model_path, root_dir=os.path.dirname(__file__), device=None, cpu_num=10 ):
         self.model_path = model_path
-        # 明確指定 utf-8:open() 不帶 encoding 會用系統預設,在中文 Windows 上
-        # 是 cp950,讀到含非 ASCII 註解的 yaml 會 UnicodeDecodeError。
-        # 叢集(Linux/UTF-8)上不會發作,所以這是只在本機重現的可攜性問題。
+        # Explicit utf-8: a bare open() uses the platform default, which is
+        # cp950 on a Chinese Windows locale and raises UnicodeDecodeError on a
+        # yaml containing non-ASCII comments. Linux/UTF-8 clusters never hit it,
+        # so this only reproduces locally.
         with open(self.model_path, encoding='utf-8') as f:
             self.model_setting = yaml.safe_load(f)
         self.root_dir = root_dir
@@ -231,33 +321,35 @@ class DLAMPty_model:
         self._setup_polar_grid()
 
     def _setup_polar_grid(self):
-        """由 yaml 的 `polar` 區塊推導所有極座標參數(S2)。
+        """Derive every polar-grid quantity from the yaml `polar` block (S2).
 
-        設計原則:**yaml 只放訓練 config.yaml 裡真實存在的三個值**,
-        其餘一律推導。這樣改網格時只要改 yaml 的三行,不必動任何程式,
-        也不可能出現「改了 R 卻忘了改 r_max」這種半套修改。
+        Design rule: the yaml holds ONLY the three values that actually exist in
+        the training config.yaml; everything else is derived. Switching grids is
+        then a three-line yaml edit, and a half-done change (new R, stale r_max)
+        cannot be expressed.
 
-            data_spatial_shape [Z, R, Theta]   ← config.yaml: data.data_spatial_shape
-            r_degree_max                       ← config.yaml: data.r_degree_max
-            original_resolution                ← config.yaml: data.original_resolution
+            data_spatial_shape [Z, R, Theta]   <- config.yaml data.data_spatial_shape
+            r_degree_max                       <- config.yaml data.r_degree_max
+            original_resolution                <- config.yaml data.original_resolution
 
-        推導出來的量:
-            polar_R / polar_theta  極座標網格數
-            r_max_px               半徑上限,換算成【格】(latlon_to_polar 用格)
-            cartesian_n            笛卡兒域邊長,與訓練端 _trim_var 同一條公式
-            center_xy              取樣中心 = 笛卡兒域正中央
+        Derived:
+            polar_R / polar_theta  polar grid counts
+            r_max_px               maximum radius in CELLS (latlon_to_polar's unit)
+            cartesian_n            Cartesian domain size, same formula as _trim_var
+            center_xy              sampling centre = middle of the Cartesian domain
         """
         polar = self.model_setting.get('polar')
         if polar is None:
             raise KeyError(
-                f"{self.model_path} 缺少 `polar:` 區塊。極座標推論必須明確宣告網格,"
-                "否則會沿用寫死的 R=201/Theta=180/r_max=40,對其他網格的模型"
-                "會 shape mismatch(或更糟:形狀碰巧對得上但幾何錯誤)。"
+                f"{self.model_path} has no `polar:` block. The polar grid must be "
+                "declared explicitly; otherwise the old hardcoded "
+                "R=201/Theta=180/r_max=40 applies, which either mismatches shapes "
+                "or - worse - happens to fit while the geometry is wrong."
             )
 
         shape = list(polar['data_spatial_shape'])
         if len(shape) != 3:
-            raise ValueError(f"data_spatial_shape 應為 [Z, R, Theta],得到 {shape}")
+            raise ValueError(f"data_spatial_shape must be [Z, R, Theta], got {shape}")
         self.polar_shape = tuple(shape)
         self.polar_R, self.polar_theta = shape[1], shape[2]
 
@@ -265,27 +357,75 @@ class DLAMPty_model:
         self.original_resolution = float(polar['original_resolution'])
         self.wind_representation = polar.get('wind_representation', 'uv')
 
-        # 半徑上限換算成「格」。訓練端 datasets.py 寫的是 `r_degree_max * 4`,
-        # 那個 4 是寫死的 1/0.25 —— 換 0.1° 資料就會錯。這裡用除法,正確且通用。
+        # Maximum radius expressed in CELLS. The training side used to write
+        # `r_degree_max * 4`, hardcoding 1/0.25; that breaks on the planned
+        # 0.1-degree data. Dividing by the resolution is correct for any grid.
         self.r_max_px = self.r_degree_max / self.original_resolution
 
-        # 笛卡兒域邊長。與訓練端 datasets._trim_var 的公式一致:
+        # Cartesian domain size, same formula as datasets._trim_var:
         #     int(r_degree_max * 2 / original_resolution) + 1
         self.cartesian_n = int(self.r_degree_max * 2 / self.original_resolution) + 1
 
-        # 取樣中心 = 笛卡兒域正中央(TC 在 Lagrangian 網格上恆在此)
+        # Sampling centre = middle of the Cartesian domain. On the Lagrangian
+        # grid the TC always sits there by construction.
         half = (self.cartesian_n - 1) / 2.0
         self.center_xy = (half, half)
 
-        # lonlat_uniformizer 重建座標軸時用的間距,就是來源解析度。
-        # __init__ 裡原本寫死 0.25,和 original_resolution 是同一件事 —— 統一由此決定。
+        # Spacing lonlat_uniformizer uses when rebuilding the axes: this is just
+        # the source resolution. __init__ hardcoded 0.25, which is the same thing;
+        # decide it here so there is one source of truth.
         self.specify_resolution = self.original_resolution
 
         if abs(self.r_max_px - half) > 1e-9:
             raise ValueError(
-                f"半徑上限({self.r_max_px} 格)與笛卡兒域半寬({half} 格)不一致。"
-                "極座標圓應恰好內接於方形域,請檢查 r_degree_max 與 original_resolution。"
+                f"Radius ({self.r_max_px} cells) does not match the Cartesian "
+                f"half-width ({half} cells). The polar disc must be inscribed in "
+                "the square domain; check r_degree_max and original_resolution."
             )
+
+        self._setup_wind()
+
+    def _setup_wind(self):
+        """Work out the vt/vr <-> u/v rotation this model needs (S4).
+
+        The yaml variable lists describe what the MODEL consumes. Everything
+        outside this wrapper - the FCNV2 coupling, the saved npy, the plotting -
+        speaks u/v, so the public interface is u/v and the rotation happens
+        inside predict_one_step. `*_variables_external` are the names that go
+        with the arrays callers hand in and get back; `*_variables` stay as the
+        model's own names because the normalisation statistics are keyed on them.
+        """
+        self.wind_convention = (self.model_setting.get('polar') or {}).get('wind_convention')
+
+        self.upper_variables_external = [_WIND_ALIAS.get(v, v) for v in self.upper_variables]
+        self.surface_variables_external = [_WIND_ALIAS.get(v, v) for v in self.surface_variables]
+
+        self._wind_idx_upper = None
+        self._wind_idx_surface = None
+        if self.wind_representation != 'vt_vr':
+            return
+
+        def pair(names, a, b, where):
+            if a not in names or b not in names:
+                raise ValueError(
+                    f"wind_representation is vt_vr but {where} lacks {a}/{b}: {names}")
+            return names.index(a), names.index(b)
+
+        self._wind_idx_upper = pair(self.upper_variables, 'vt', 'vr', 'upper_vars')
+        self._wind_idx_surface = pair(self.surface_variables, 'vt10', 'vr10', 'surface_vars')
+
+        if self.wind_convention is not None and self.wind_convention not in WIND_CONVENTIONS:
+            raise ValueError(
+                f"unknown wind_convention {self.wind_convention!r}; "
+                f"expected one of {sorted(WIND_CONVENTIONS)}")
+
+    def _rotate_wind(self, upper, surface, theta_rad, inverse):
+        """Apply the rotation to both the upper and the surface wind pair."""
+        rotate_polar_wind(upper, theta_rad, *self._wind_idx_upper,
+                          self.wind_convention, inverse)
+        rotate_polar_wind(surface, theta_rad, *self._wind_idx_surface,
+                          self.wind_convention, inverse)
+        return upper, surface
 
     def _stat_from_nc(self, nc_file_path: str, want_sfc: bool) -> np.ndarray:
         """
@@ -345,13 +485,17 @@ class DLAMPty_model:
         return model
     
     def initialize(self):
-        if self.wind_representation == 'vt_vr':
-            raise NotImplementedError(
-                f"{self.model_path} 宣告 wind_representation: vt_vr,但 polar_to_latlon "
-                "目前只做內插、沒有做向量旋轉(S4)。切向/徑向風被當純量搬回經緯度網格,"
-                "送進 FCNV2 的會是物理上錯誤的風場。實作反向旋轉之後再移除此檢查:\n"
-                "    u = -vt*sin(theta) + vr*cos(theta)\n"
-                "    v =  vt*cos(theta) + vr*sin(theta)"
+        if self.wind_representation == 'vt_vr' and self.wind_convention is None:
+            raise ValueError(
+                f"{self.model_path} declares wind_representation: vt_vr but leaves "
+                "wind_convention unset, so the vt/vr <-> u/v rotation cannot be "
+                "inverted. The dataset ships vt/vr precomputed and this project "
+                "never produced them, so the convention has to be measured rather "
+                "than assumed - guessing it yields a wind field that is mirrored or "
+                "rotated, with no error anywhere. Determine it with\n"
+                "    python tools/verify_vtvr_convention.py <a *_combined.nc file>\n"
+                f"on the cluster and set wind_convention in {self.model_path}.\n"
+                f"Valid values: {sorted(WIND_CONVENTIONS)}"
             )
         self.model = self.load_model()
         self._check_onnx_shape()
@@ -362,11 +506,12 @@ class DLAMPty_model:
               f"cartesian {self.cartesian_n}x{self.cartesian_n}")
 
     def _check_onnx_shape(self):
-        """比對 yaml 宣告的極座標網格與 onnx 實際期望的輸入形狀。
+        """Cross-check the yaml-declared polar grid against what the onnx expects.
 
-        沒有這個檢查,網格不合會等到第一次 model.run() 才炸(訊息還很難讀);
-        更糟的是若形狀碰巧相容但幾何不同(例如 R 對了但 r_degree_max 錯),
-        永遠不會報錯,只會安靜地輸出錯誤結果。
+        Without it, a mismatch surfaces only at the first model.run() with an
+        unreadable message; and if the shapes happen to be compatible while the
+        geometry differs (right R, wrong r_degree_max) nothing ever complains and
+        the output is quietly wrong.
         """
         want = {'input_upper': (self.polar_shape[0], self.polar_R, self.polar_theta,
                                 len(self.upper_variables)),
@@ -376,14 +521,15 @@ class DLAMPty_model:
         for inp in self.model.get_inputs():
             if inp.name not in want:
                 continue
-            # onnx 的第 0 維是 batch,可能是動態的(字串);只比對其後各維
+            # Axis 0 is batch and may be dynamic (a string); compare the rest.
             got = tuple(d for d in inp.shape[1:] if isinstance(d, int))
             exp = want[inp.name]
             if len(got) == len(exp) and got != exp:
                 raise ValueError(
-                    f"{inp.name} 形狀不合:onnx 期望 {got},但 yaml 的 polar 區塊"
-                    f"推導出 {exp}。請確認 {self.model_path} 的 data_spatial_shape / "
-                    f"變數表與訓練時的 config.yaml 一致。")
+                    f"{inp.name} shape mismatch: onnx expects {got}, the yaml "
+                    f"polar block derives {exp}. Check that data_spatial_shape "
+                    f"and the variable lists in {self.model_path} match the "
+                    f"training config.yaml.")
         
     def normalize(self, upper_data, surface_data, reverse=False):
         if reverse:
@@ -396,19 +542,28 @@ class DLAMPty_model:
         
     def predict_one_step(self, input_upper, input_surface):
         
-        # 形狀先驗證再轉換:笛卡兒域邊長由 r_degree_max/original_resolution 推導,
-        # 對不上代表 IC 的裁切範圍與訓練時不同,再往下跑只會得到錯誤結果。
+        # Validate before converting. The Cartesian domain size is derived from
+        # r_degree_max / original_resolution; a mismatch means the IC was cropped
+        # differently than during training, and continuing only yields wrong output.
         n = self.cartesian_n
         if input_surface.shape[:2] != (n, n) or input_upper.shape[1:3] != (n, n):
             raise ValueError(
-                f"輸入的笛卡兒網格應為 {n}x{n}(由 r_degree_max={self.r_degree_max:g} 度 / "
-                f"original_resolution={self.original_resolution:g} 度推導),"
-                f"實際拿到 upper {input_upper.shape}、surface {input_surface.shape}。")
+                f"Expected a {n}x{n} Cartesian grid (derived from "
+                f"r_degree_max={self.r_degree_max:g} deg / "
+                f"original_resolution={self.original_resolution:g} deg), got "
+                f"upper {input_upper.shape}, surface {input_surface.shape}.")
 
         polar_kw = dict(R=self.polar_R, Theta=self.polar_theta,
                         r_max=self.r_max_px, center_xy=self.center_xy)
-        input_upper, _, _ = latlon_to_polar(input_upper, **polar_kw)
+        input_upper, _, theta_deg = latlon_to_polar(input_upper, **polar_kw)
         input_surface, _, _ = latlon_to_polar(input_surface, **polar_kw)
+
+        # S4: callers speak u/v; the model wants vt/vr. Rotate here, in polar
+        # space, where theta is exact per column.
+        theta_rad = np.deg2rad(theta_deg)
+        if self.wind_representation == 'vt_vr':
+            self._rotate_wind(input_upper, input_surface, theta_rad, inverse=False)
+
         input_upper,input_surface = self.normalize(input_upper,input_surface)
         input_upper = np.expand_dims(input_upper, axis=0)
         input_surface = np.expand_dims(input_surface, axis=0)
@@ -425,12 +580,20 @@ class DLAMPty_model:
 
         # reverse back
         output_upper, output_surface = self.normalize(output_upper,output_surface,reverse=True)
-        # ⚠️ 圓外(方形的四個角,佔 23.4%)沒有模型輸出,必須填 NaN 而非 0。
-        #    填 0 的後果(B1→B2):lon 通道被 0 稀釋成 0.766 倍,
-        #    lonlat_uniformizer 算出的中心從 130°E 變成 99.6°E ——
-        #    耦合會把 LLAT 的場貼到全球網格偏西 3,300 km 的位置。
-        #    NaN 不會傳染:latlon_to_polar 只取樣 r ≤ r_max(碰不到角落),
-        #    LLAT→FCNV2 只讀 r < 7.5°,而 FCNV2→LLAT 反而會把角落補回來。
+
+        # S4: back to u/v before leaving polar space, so that what gets
+        # interpolated below is a genuine vector field rather than two
+        # theta-dependent scalars.
+        if self.wind_representation == 'vt_vr':
+            self._rotate_wind(output_upper, output_surface, theta_rad, inverse=True)
+
+        # The four corners outside the disc (23.4% of the grid) have no model
+        # output and must be NaN, not 0. Filling 0 caused B1->B2: the lon channel
+        # was diluted to 0.766x, lonlat_uniformizer read a 130E domain as 99.6E,
+        # and the coupling pasted the LLAT field 3,300 km too far west.
+        # NaN does not spread: latlon_to_polar samples only r <= r_max so it never
+        # reads the corners, LLAT->FCNV2 feedback reads only r < 7.5 deg, and the
+        # FCNV2->LLAT boundary replacement overwrites the corners anyway.
         back_kw = dict(output_shape=(self.cartesian_n, self.cartesian_n),
                        r_max=self.r_max_px, center_xy=self.center_xy,
                        mode="bilinear", fill_value=np.nan)
@@ -445,8 +608,8 @@ class DLAMPty_model:
                 self.uniformize_lonlat,
                 self.specify_resolution,
             )
-            # B6:這行原本縮排在 if 之外,uniformize_lonlat=False 時
-            #     lon/lat 未定義會 NameError。移進區塊內。
+            # B6: this line used to sit outside the if, referencing lon/lat
+            # unconditionally and raising NameError when the flag was off.
             (output_surface[:, :, -2], output_surface[:, :, -1]) = np.meshgrid(lon, lat)
 
         return output_upper, output_surface
@@ -470,16 +633,19 @@ class DLAMPty_model:
         return input_upper, input_surface
     
     def IC_from_xarray_to_npy(self, IC_dataset:xr.Dataset, additional_vars=False):
+        # External names: predict_one_step takes and returns u/v, so read u/v out
+        # of the IC even when the model itself is trained on vt/vr. For a uv model
+        # the two lists are identical.
         if not additional_vars:
             print('It needs to calc additional vars.')
             IC_dataset = calc_additional_vars(IC_dataset, True)
-        input_upper = np.stack([IC_dataset[var].values for var in self.upper_variables], axis=-1).squeeze()     
-        input_surface = np.stack([IC_dataset[var].values for var in self.surface_variables], axis=-1).squeeze()
+        input_upper = np.stack([IC_dataset[var].values for var in self.upper_variables_external], axis=-1).squeeze()
+        input_surface = np.stack([IC_dataset[var].values for var in self.surface_variables_external], axis=-1).squeeze()
         lon, lat = np.meshgrid(IC_dataset.longitude, IC_dataset.latitude)
         input_surface = np.concatenate((input_surface, np.stack([lon, lat],axis=-1)), axis=-1)
         return input_upper, input_surface
 
     def data_to_xarray(self, upper_data, surface_data, timestep):
-        DLAMPty_xr = to_xarray(upper_data, surface_data, self.upper_variables, self.surface_variables, self.upper_units, self.surface_units, self.pressure_levels)
+        DLAMPty_xr = to_xarray(upper_data, surface_data, self.upper_variables_external, self.surface_variables_external, self.upper_units, self.surface_units, self.pressure_levels)
         DLAMPty_xr = DLAMPty_xr.expand_dims(time=[pd.to_datetime(timestep)])
         return DLAMPty_xr

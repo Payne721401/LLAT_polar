@@ -1,21 +1,25 @@
-"""推論端的極座標網格參數化(S2)與 vt/vr yaml(S3)。
+"""Polar grid parameterisation (S2) and the vt/vr model card (S3).
 
-設計意圖
---------
-`onnx/*.yaml` 的 `polar:` 區塊只放**訓練 config.yaml 裡真實存在的三個值**:
+Design intent
+-------------
+The `polar:` block of onnx/*.yaml holds ONLY the three values that actually
+exist in the training config.yaml:
 
     data_spatial_shape [Z, R, Theta]
-    r_degree_max          (度)
-    original_resolution   (度/格)
+    r_degree_max          (degrees)
+    original_resolution   (degrees per cell)
 
-其餘(半徑上限的格數、笛卡兒域邊長、取樣中心、uniformizer 的間距)全部推導。
-這樣換網格只要改 yaml 三行,不可能出現「改了 R 卻忘了改 r_max」的半套修改
-—— 那正是 S2 之前的狀態(R/Theta/r_max 寫死在 predict_one_step 裡)。
+Everything else - radius in cells, Cartesian domain size, sampling centre, the
+spacing handed to lonlat_uniformizer - is derived. Switching grids is then a
+three-line yaml edit, and a half-done change (new R, stale r_max) cannot be
+expressed. That was the state before S2, when R/Theta/r_max were literals inside
+predict_one_step.
 
-本檔不需要 .onnx 權重:只建構物件、不呼叫 initialize()。
+No .onnx weights needed: these construct the object without calling initialize().
 """
 import os
 
+import numpy as np
 import pytest
 import yaml
 
@@ -27,7 +31,7 @@ YAML_VTVR = os.path.join(ROOT, "onnx", "LLAT_polar_vtvr_v1.yaml")
 
 
 def write_yaml(tmp_path, **polar_overrides):
-    """以 vt/vr yaml 為底,改寫 polar 區塊,產生一份臨時 yaml。"""
+    """Copy the vt/vr yaml with an edited polar block into a temp file."""
     cfg = yaml.safe_load(open(YAML_VTVR, encoding="utf-8"))
     cfg["polar"].update(polar_overrides)
     p = tmp_path / "tmp.yaml"
@@ -36,14 +40,15 @@ def write_yaml(tmp_path, **polar_overrides):
 
 
 # --------------------------------------------------------------------------
-# S3:vt/vr yaml 的內容
+# S3: contents of the vt/vr model card
 # --------------------------------------------------------------------------
 
 def test_vtvr_yaml_matches_training_config():
-    """yaml 的變數表與網格必須和訓練用 config.yaml 一致。
+    """Variable lists and grid must agree with the training config.yaml.
 
-    這是整條推論鏈最容易靜默出錯的地方:變數順序錯一格,模型會把濕度
-    當成溫度讀,而且完全不會報錯。
+    This is the quietest failure mode in the whole inference chain: get the
+    variable ORDER wrong by one and the model reads humidity as temperature,
+    with nothing to indicate anything is amiss.
     """
     cfg = yaml.safe_load(open(YAML_VTVR, encoding="utf-8"))
     train = yaml.safe_load(open(os.path.join(ROOT, "config.yaml"), encoding="utf-8"))
@@ -53,7 +58,7 @@ def test_vtvr_yaml_matches_training_config():
     assert cfg["polar"]["data_spatial_shape"] == train["data"]["data_spatial_shape"]
     assert cfg["polar"]["r_degree_max"] == train["data"]["r_degree_max"]
     assert cfg["polar"]["original_resolution"] == train["data"]["original_resolution"]
-    # 統計檔也必須是同一份,否則標準化的基準不同
+    # Same statistics file, or normalisation is done against a different baseline.
     assert os.path.basename(cfg["stat_mean_file"]) == os.path.basename(train["data"]["stat_mean_file"])
     assert os.path.basename(cfg["stat_std_file"]) == os.path.basename(train["data"]["stat_std_file"])
 
@@ -73,14 +78,14 @@ def test_stat_files_exist():
 
 
 # --------------------------------------------------------------------------
-# S2:參數推導
+# S2: derivation
 # --------------------------------------------------------------------------
 
 def test_derived_grid_uv():
-    """學姊的 baseline:R=201、Δr 0.05°,但笛卡兒域仍是 81×81。"""
+    """The baseline: R=201 at 0.05 deg radial spacing, still an 81x81 domain."""
     m = DLAMPty_model(YAML_UV, root_dir=ROOT)
     assert (m.polar_R, m.polar_theta) == (201, 180)
-    assert m.r_max_px == 40.0            # 10 度 / 0.25 度每格
+    assert m.r_max_px == 40.0            # 10 deg / 0.25 deg per cell
     assert m.cartesian_n == 81           # 10*2/0.25 + 1
     assert m.center_xy == (40.0, 40.0)
     assert m.specify_resolution == 0.25
@@ -88,7 +93,7 @@ def test_derived_grid_uv():
 
 
 def test_derived_grid_vtvr():
-    """我的模型:R=41(Δr 對齊來源解析度),其餘幾何不變。"""
+    """This project's model: R=41, radial spacing matched to the source grid."""
     m = DLAMPty_model(YAML_VTVR, root_dir=ROOT)
     assert (m.polar_R, m.polar_theta) == (41, 180)
     assert m.r_max_px == 40.0
@@ -97,25 +102,40 @@ def test_derived_grid_vtvr():
 
 
 def test_grid_follows_yaml_without_touching_code(tmp_path):
-    """改 yaml 的三個值,推導出來的網格就跟著變 —— 這是 S2 的重點。
+    """Edit the three yaml values and the derived grid follows - the point of S2.
 
-    這裡故意用未來要跑的 0.1° 高解析情境:訓練端 datasets.py 寫的是
-    `r_max = r_degree_max * 4`(把 1/0.25 寫死),換成 0.1° 就會算成 40 而非 100。
-    推論端用除法,所以這條會過;若哪天有人把它改回乘法,這條立刻紅。
+    Uses the planned 0.1-degree high-resolution case on purpose. The training
+    side used to write `r_max = r_degree_max * 4`, hardcoding 1/0.25, which would
+    give 40 cells instead of 100 here. Inference divides by the resolution, so
+    this passes; if anyone converts it back to a multiplication, it fails.
     """
     p = write_yaml(tmp_path, data_spatial_shape=[13, 100, 360],
                    r_degree_max=10, original_resolution=0.1,
                    wind_representation="uv")
     m = DLAMPty_model(p, root_dir=ROOT)
     assert (m.polar_R, m.polar_theta) == (100, 360)
-    assert m.r_max_px == 100.0           # 10 / 0.1,不是 10*4
+    assert m.r_max_px == 100.0           # 10 / 0.1, not 10*4
     assert m.cartesian_n == 201          # 10*2/0.1 + 1
     assert m.center_xy == (100.0, 100.0)
     assert m.specify_resolution == 0.1
 
 
+def test_training_dataset_derives_the_same_radius():
+    """The training side must agree, or the model is served a different geometry.
+
+    ERA5TCDataset now derives r_max_px the same way. Checked here rather than in
+    a training test because the value only matters when the two ends agree.
+    """
+    import inspect
+
+    from utils import datasets
+    src = inspect.getsource(datasets.ERA5TCDataset.__init__)
+    assert "self.r_max_px = self.r_degree_max / self.original_resolution" in src
+    assert "r_degree_max*4" not in inspect.getsource(datasets)
+
+
 # --------------------------------------------------------------------------
-# 防呆:設定寫錯要當場報錯,不能安靜地跑出錯誤結果
+# Guards: a wrong setting must fail loudly, never run quietly
 # --------------------------------------------------------------------------
 
 def test_missing_polar_block_raises(tmp_path):
@@ -128,24 +148,25 @@ def test_missing_polar_block_raises(tmp_path):
 
 
 def test_non_integer_radius_raises(tmp_path):
-    """半徑換算成格數若不是整數,就報錯。
+    """The radius has to land on a whole number of cells.
 
-    `cartesian_n = int(2*r_degree_max/original_resolution) + 1` 裡的 `int()`
-    會無條件捨去。只要 `2*r_degree_max/original_resolution` 不是整數,
-    笛卡兒域的半寬就和極座標半徑對不上 —— 圓不再內接於方,取樣幾何
-    與訓練時不同,但形狀仍然合法、模型照跑、不會有任何錯誤訊息。
+    `cartesian_n = int(2*r_degree_max/original_resolution) + 1` truncates. Unless
+    `2*r_degree_max/original_resolution` is an integer, the domain half-width and
+    the polar radius disagree: the disc is no longer inscribed in the square, the
+    sampling geometry differs from training, and yet the shapes stay valid and
+    the model runs without complaint.
 
-    例:r_degree_max=10 搭 0.3° ⇒ 半徑 33.33 格,但域半寬只有 33 格。
-    (合法的組合如 10/0.25 → 40 格、7/0.25 → 28 格,都會通過。)
+    Example: 10 deg with 0.3 deg spacing gives a 33.33-cell radius in a domain
+    that is only 33 cells wide. (10/0.25 -> 40 and 7/0.25 -> 28 both pass.)
     """
     p = write_yaml(tmp_path, r_degree_max=10, original_resolution=0.3,
                    wind_representation="uv")
-    with pytest.raises(ValueError, match="內接"):
+    with pytest.raises(ValueError, match="inscribed"):
         DLAMPty_model(p, root_dir=ROOT)
 
 
 def test_other_valid_resolutions_accepted(tmp_path):
-    """反向確認上一條不是恆真:整除的組合必須通過。"""
+    """Counter-check that the test above is not vacuous: exact ratios must pass."""
     p = write_yaml(tmp_path, data_spatial_shape=[13, 41, 180],
                    r_degree_max=7, original_resolution=0.25,
                    wind_representation="uv")
@@ -156,14 +177,11 @@ def test_other_valid_resolutions_accepted(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# 接線:predict_one_step 必須真的用推導出來的值
+# Wiring: predict_one_step must actually use the derived values
 # --------------------------------------------------------------------------
 
 class _FakeSession:
-    """假的 onnxruntime session:記下實際收到的形狀,回傳同形狀的零。
-
-    只驗「餵給模型的極座標網格對不對」,不需要真的權重。
-    """
+    """Stand-in for an onnxruntime session: records shapes, returns zeros."""
 
     def __init__(self, z, r, theta, n_upper, n_sfc):
         self.shape = (z, r, theta, n_upper)
@@ -172,30 +190,27 @@ class _FakeSession:
 
     def run(self, _, inputs):
         self.seen = {k: v.shape for k, v in inputs.items()}
-        import numpy as _np
-        return [_np.zeros((1,) + self.shape, dtype=_np.float32),
-                _np.zeros((1,) + self.sfc_shape, dtype=_np.float32)]
+        return [np.zeros((1,) + self.shape, dtype=np.float32),
+                np.zeros((1,) + self.sfc_shape, dtype=np.float32)]
 
 
 def test_predict_one_step_uses_derived_grid(tmp_path):
-    """把 yaml 的 R 改成一個特別的數,模型收到的形狀就必須跟著變。
+    """Change R in the yaml and the shape reaching the model must change too.
 
-    這條才真正鎖住 S2。只檢查 `m.polar_R` 這類屬性是不夠的 ——
-    程式完全可以推導出正確的值卻在 predict_one_step 裡繼續用寫死的
-    R=201,屬性測試一樣全綠。實測過:還原成硬編碼時,只有這條會紅。
+    Asserting on `m.polar_R` alone is not enough: the code can derive the right
+    value and still pass a literal R=201 to latlon_to_polar, and every
+    attribute-level test stays green. Verified by experiment - reverting to
+    hardcoded values fails only this test.
     """
-    import numpy as np
-
     R_ODD, THETA_ODD = 41, 180
     p = write_yaml(tmp_path, data_spatial_shape=[13, R_ODD, THETA_ODD],
                    r_degree_max=10, original_resolution=0.25,
                    wind_representation="uv")
     m = DLAMPty_model(p, root_dir=ROOT)
 
-    n_sfc = len(m.surface_variables) + 2          # ingest_space_info 追加 lon/lat
+    n_sfc = len(m.surface_variables) + 2          # ingest_space_info appends lon/lat
     m.model = _FakeSession(13, R_ODD, THETA_ODD, len(m.upper_variables), n_sfc)
-    # 標準化在這裡不是重點,設成恆等
-    m.upper_mean = m.surface_mean = 0.0
+    m.upper_mean = m.surface_mean = 0.0           # normalisation is not the point here
     m.upper_std = m.surface_std = 1.0
 
     n = m.cartesian_n
@@ -209,29 +224,15 @@ def test_predict_one_step_uses_derived_grid(tmp_path):
 
     assert m.model.seen["input_upper"] == (1, 13, R_ODD, THETA_ODD, len(m.upper_variables))
     assert m.model.seen["input_surface"] == (1, R_ODD, THETA_ODD, n_sfc)
-    # 轉回來的形狀要回到笛卡兒域
     assert out_u.shape == (13, n, n, len(m.upper_variables))
     assert out_s.shape == (n, n, n_sfc)
 
 
 def test_predict_one_step_rejects_wrong_input_size(tmp_path):
-    """IC 的裁切範圍和 yaml 推導的域大小不符時,要當場報錯。"""
-    import numpy as np
-
+    """An IC cropped differently from training must be refused up front."""
     p = write_yaml(tmp_path, wind_representation="uv")
     m = DLAMPty_model(p, root_dir=ROOT)
-    bad = 61                                       # 應為 81
-    with pytest.raises(ValueError, match="笛卡兒網格"):
+    bad = 61                                       # should be 81
+    with pytest.raises(ValueError, match="Cartesian grid"):
         m.predict_one_step(np.zeros((13, bad, bad, len(m.upper_variables))),
                            np.zeros((bad, bad, len(m.surface_variables) + 2)))
-
-
-def test_vtvr_blocks_until_rotation_implemented():
-    """S4 未實作前,載入 vt/vr 模型必須明確拒絕,而不是輸出錯誤的風場。
-
-    polar_to_latlon 只做內插。vt/vr 是座標相依的向量,直接搬回經緯度網格
-    得到的不是 u/v;送進 FCNV2 會是物理上錯誤的風。
-    """
-    m = DLAMPty_model(YAML_VTVR, root_dir=ROOT)
-    with pytest.raises(NotImplementedError, match="vt_vr"):
-        m.initialize()

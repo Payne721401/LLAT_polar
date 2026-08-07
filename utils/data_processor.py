@@ -152,11 +152,13 @@ def lonlat_uniformizer(
     lat : np.ndarray
         A 1D array of latitude values.
     """
-    # ⚠️ 全面使用 nanmean(B2 修正,2026-08-07)
-    # 極座標推論時 polar_to_latlon 會把「圓外的四個角落」標成 NaN(佔 23.4%)。
-    # 若這裡用一般的 mean,NaN 會讓整條計算失效;而先前用 fill_value=0 時,
-    # 平均會被 0 稀釋成 0.766 倍 —— 中心 130°E 會被算成 99.6°E(偏 3,300 km)。
-    # 笛卡兒路徑沒有 NaN,nanmean 與 mean 等價,故此改動向後相容。
+    # nan-aware throughout (B2 fix, 2026-08-07).
+    # In polar inference, polar_to_latlon marks the four corners outside the disc
+    # as NaN (23.4% of the grid). A plain mean would propagate that NaN; and with
+    # the previous fill_value=0 the mean was diluted by exactly the area ratio,
+    # placing a domain centred at 130E at 99.6E - off by 3,300 km.
+    # The Cartesian path has no NaN, where nanmean == mean, so this is backward
+    # compatible.
     # original lon and lat axis values
     lon = np.nanmean(raw_lon, axis=0)
     lat = np.nanmean(raw_lat, axis=1)
@@ -164,10 +166,10 @@ def lonlat_uniformizer(
     if uniformize_lonlat:
         # calc the average of resolution of raw_lat
         # these step also make sure the direction of lat and lon is the same with the direction of raw_lat and raw_lon
-        # ⚠️ 這兩個 mean 同樣【必須】是 nanmean:它們的值只被用來判斷座標軸的
-        #    「方向」(見下方 specify_resolution 分支)。留著 NaN 會讓
-        #    `specify_resolution * lon_res >= 0` 恆為 False → 經度軸被整個反向,
-        #    而且不會有任何錯誤訊息。
+        # These two must be nan-aware as well. Their values are used only for
+        # their SIGN, to decide the axis direction (see the specify_resolution
+        # branch below). A NaN makes `specify_resolution * lon_res >= 0` always
+        # False, which silently reverses the longitude axis.
         lat_diff = np.diff(raw_lat, axis=0).flatten()
         lat_res = np.nanmean(lat_diff)
 
@@ -198,9 +200,9 @@ def lonlat_uniformizer(
             else:
                 lat_res = specify_resolution * -1
         else:
-            # 這一支在 specify_resolution 為 falsy 時才走(極座標推論路徑給的是
-            # 0.25,所以走不到)。一併改成 nan-aware,避免日後有人關掉
-            # specify_resolution 時踩到同一個坑。
+            # Only reached when specify_resolution is falsy; the polar inference
+            # path passes 0.25, so it is not used today. Made nan-aware anyway so
+            # that turning specify_resolution off later does not hit the same trap.
             vaild_lat_diff = lat_diff[
                 (np.abs(lat_diff - np.nanmean(lat_diff)) < 2 * np.nanstd(lat_diff))
             ]
@@ -221,8 +223,8 @@ def lonlat_uniformizer(
         #     lon_res = 0.25
 
         # locate the center
-        # ⚠️ 這兩行就是「颱風中心在哪」的最終答案 —— 耦合時 FCNV2 就是靠它
-        #    決定要把 LLAT 的場貼到全球網格的哪個位置。必須跳過 NaN。
+        # These two lines ARE the answer to "where is the TC": the coupling uses
+        # them to decide where in the FCNV2 global grid the LLAT field is pasted.
         lat_center = np.nanmean(lat)
         lon_center = np.nanmean(lon)
         # calc the length of lat and lon

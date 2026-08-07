@@ -1,29 +1,39 @@
-"""
-PanguPolarModel 測試(smoke / determinism / θ-roll 等變性診斷)。
+"""PanguPolarModel: smoke, determinism, and a theta-roll equivariance diagnostic.
 
-跑法(cwd 在 regional_model/DLAMPty_polar):
+Run with (cwd = repo root):
     python -m pytest tests/ -v
 
-正式測試(會過):
-    test_smoke        —— 模型能 forward、形狀正確、無 NaN
-    test_determinism  —— eval 下同輸入兩次完全相同
+Real tests (these pass):
+    test_smoke        - the model runs forward, shapes are right, no NaN
+    test_determinism  - the same input twice in eval mode gives identical output
 
-診斷(xfail,不是紅色關卡):
-    test_theta_equivariance —— θ 旋轉等變。**刻意標 xfail**,原因(2026-07 實測釐清):
-      1. 等變**不是**極座標的驗收標準。真需求是「θ 接縫連續」,而這個 transformer
-         用非重疊 patch embed,實測**天生抗接縫**(循環/零填充、拆/留 mask 全都無縫)。
-      2. Swin 視窗注意力只對「roll 整數個**視窗**」等變,不是整數個 patch。真正粒度是
-         k = patch_θ × window_θ,且需 window_θ 偶數 + coarse 單一視窗。學姊的視窗
-         (15,10)不滿足 → 圈內**沒有任何**非平凡 k 等變(只有 k=180 整圈)。
-      3. 詳見 CLAUDE.md「測試指令」。此測試留著只當數值診斷,不當通過門檻。
-    （若之後改成可等變的網格/視窗,可拿掉 xfail 並把 k 換成該設計的真實粒度。）
+Diagnostic (xfail; NOT a gate):
+    test_theta_equivariance - equivariance under a theta roll. Marked xfail on
+    purpose, for reasons established by experiment in 2026-07:
+
+      1. Equivariance is not the acceptance criterion for the polar grid. What
+         actually matters is that the theta seam is continuous, and this
+         transformer - non-overlapping patch embed plus window attention - turns
+         out to be seamless by construction. Circular vs zero padding, and
+         splitting vs keeping the cross-seam mask, all measured the same.
+      2. Swin window attention is equivariant only to rolls of a whole number of
+         WINDOWS, not of patches. The granularity is k = patch_theta *
+         window_theta, and it additionally needs an even window_theta plus a
+         single window at the coarse level. The (15, 10) windows used here meet
+         none of that, so no non-trivial k in one revolution is equivariant -
+         only the full k=180.
+      3. See CLAUDE.md, "test commands". This test is kept as a numerical
+         diagnostic, not as a pass/fail gate.
+
+    (If the grid or windows are ever changed to something equivariant, drop the
+    xfail and set k to that design's real granularity.)
 """
 import pytest
 import torch
 
 from models.pangu_polar import PanguPolarModel
 
-# 依 config.yaml 的參數
+# Matches config.yaml
 CFG = dict(
     data_spatial_shape=(13, 201, 180),
     upper_vars=6,
@@ -35,7 +45,7 @@ CFG = dict(
     window_size1=(2, 10, 15),
     window_size2=(2, 8, 10),
 )
-AX_U, AX_S = 3, 2   # (B,Z,R,Θ,C) / (B,R,Θ,C) 的 Θ 軸
+AX_U, AX_S = 3, 2   # the Theta axis of (B,Z,R,Theta,C) and (B,R,Theta,C)
 TOL = 1e-5
 
 
@@ -43,7 +53,7 @@ TOL = 1e-5
 def model():
     torch.manual_seed(0)
     m = PanguPolarModel(**CFG)
-    m.eval()   # 關掉 DropPath
+    m.eval()   # disable DropPath
     return m
 
 
@@ -75,8 +85,11 @@ def test_determinism(model, inputs, base_out):
     assert torch.equal(out_s2, base_out[1])
 
 
-@pytest.mark.xfail(reason="等變非驗收標準；Swin 視窗粒度下此網格圈內無非平凡等變 roll（見 docstring / CLAUDE.md）",
-                   strict=False)
+@pytest.mark.xfail(
+    reason="equivariance is not an acceptance criterion; at Swin's window "
+           "granularity this grid has no non-trivial equivariant roll "
+           "(see docstring / CLAUDE.md)",
+    strict=False)
 @pytest.mark.parametrize("k", [12, 24, 60])
 def test_theta_equivariance(model, inputs, base_out, k):
     u, s = inputs
@@ -87,6 +100,6 @@ def test_theta_equivariance(model, inputs, base_out, k):
     du = (out_u - exp_u).abs().max().item()
     ds = (out_s - exp_s).abs().max().item()
     assert du < TOL and ds < TOL, (
-        f"θ-roll k={k} 不等變: upper_max_diff={du:.3e}, surf_max_diff={ds:.3e} "
-        f"(門檻 {TOL:.0e})"
+        f"theta roll k={k} is not equivariant: upper_max_diff={du:.3e}, "
+        f"surf_max_diff={ds:.3e} (tolerance {TOL:.0e})"
     )

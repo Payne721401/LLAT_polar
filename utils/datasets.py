@@ -70,6 +70,21 @@ class ERA5TCDataset(torch.utils.data.Dataset):
         self.plugin_additional_vars = plugin_additional_vars
         self.r_degree_max = r_degree_max
         self.original_resolution = original_resolution
+        # Maximum polar radius in CELLS, which is the unit latlon_to_polar's
+        # center_xy uses. The two call sites below used to write
+        # `r_degree_max * 4`, hardcoding 1/0.25: equivalent on the current
+        # 0.25-degree data, but the planned 0.1-degree finetune would silently
+        # get 40 cells instead of 100 - a disc 2/5 of the intended size, with no
+        # error anywhere. Deriving it from the resolution keeps the two in step.
+        self.r_max_px = self.r_degree_max / self.original_resolution
+        # Cartesian domain size; _trim_var uses the same formula. The polar disc
+        # is meant to be inscribed in that square, so a mismatch means
+        # r_degree_max and original_resolution do not yield a whole number of cells.
+        self.cartesian_n = int(self.r_degree_max * 2 / self.original_resolution) + 1
+        assert abs(self.r_max_px - (self.cartesian_n - 1) / 2) < 1e-9, (
+            f"radius {self.r_max_px} cells does not match domain half-width "
+            f"{(self.cartesian_n - 1) / 2} cells; check r_degree_max={r_degree_max} "
+            f"and original_resolution={original_resolution}")
 
         self.combined_nc_input = combined_nc_input
         # self.stat_mean_upper_file = path.join('/nwpr/wfc/com136/data/ERA5_for_TC/1_WP',stat_mean_upper_file)
@@ -221,7 +236,7 @@ class ERA5TCDataset(torch.utils.data.Dataset):
         upper_data = np.stack([np.squeeze(self._trim_var(upper_nc[v])) for v in self.upper_variables], axis=-1)
         upper_data = torch.FloatTensor(upper_data)
         # print(upper_data.shape)
-        upper_data, _, _ = latlon_to_polar(upper_data,  R=self.data_spatial_shape[-2],Theta=self.data_spatial_shape[-1], r_max=self.r_degree_max*4)        
+        upper_data, _, _ = latlon_to_polar(upper_data,  R=self.data_spatial_shape[-2],Theta=self.data_spatial_shape[-1], r_max=self.r_max_px)        
         # print(upper_data.shape)
         surface_data = np.stack([np.squeeze(self._trim_var(surface_nc[v])) for v in self.surface_variables], axis=-1)
         # when setting ingest_space_info=True, add `longitude` and `latitude` to the data with values respectively
@@ -239,7 +254,7 @@ class ERA5TCDataset(torch.utils.data.Dataset):
             surface_data = np.concatenate((surface_data, np.expand_dims(lon,-1), np.expand_dims(lat,-1)), axis=-1)
         surface_data = torch.FloatTensor(surface_data)
         # print(surface_data.shape)
-        surface_data, _, _ = latlon_to_polar(surface_data,  R=self.data_spatial_shape[-2], Theta=self.data_spatial_shape[-1], r_max=self.r_degree_max*4)
+        surface_data, _, _ = latlon_to_polar(surface_data,  R=self.data_spatial_shape[-2], Theta=self.data_spatial_shape[-1], r_max=self.r_max_px)
         # print(surface_data.shape)
 
         if self.standardize:

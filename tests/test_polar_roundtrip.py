@@ -1,23 +1,26 @@
-"""極座標 ↔ 笛卡兒來回轉換的正確性(B1 / B2 / B6 迴歸測試)。
+"""Polar <-> Cartesian round trip (regression tests for B1 / B2 / B6).
 
-背景
-----
-LLAT 的 surface 最後兩個通道是 `lon` / `lat`,它們是**被預測的變數**,不是
-座標軸 —— 因為網格跟著颱風跑(Lagrangian),「颱風移動」在實作上就是
-「lon/lat 場整體平移」。所以下游是用 `lon/lat 場的平均` 當作颱風中心,
-再據此決定要把 LLAT 的場貼到 FCNV2 全球網格的哪個位置。
+Background
+----------
+The last two surface channels are `lon` / `lat`, and they are *predicted
+variables*, not coordinate axes: the grid follows the storm (Lagrangian), so
+"the TC moved" is implemented as "the lon/lat field shifted". Downstream code
+therefore takes the MEAN of those fields as the TC centre, and uses it to decide
+where in the FCNV2 global grid the LLAT field gets pasted.
 
-B1 / B2 這對 bug 就是攻擊這條鏈:
-  B1  `polar_to_latlon(fill_value=0.0)` —— 極座標圓裝不滿 81×81 方框,
-      四個角落(1536 格 = 23.4%)被填成物理 0。
-  B2  `lonlat_uniformizer` 用整個場的平均定位中心 ⇒ 被 0 稀釋成 0.766 倍
-      ⇒ 130°E 被算成 99.6°E,偏 3,300 km,而且會逐步回饋惡化。
+B1 and B2 attack exactly that chain:
+  B1  `polar_to_latlon(fill_value=0.0)` - the polar disc does not fill the 81x81
+      square, so the four corners (1536 cells, 23.4%) were set to a physical 0.
+  B2  `lonlat_uniformizer` locates the centre from the mean of the whole field,
+      so those zeros diluted it by the area ratio: 130E was read as 99.6E, off by
+      3,300 km, and the error compounds because the corrupted axis is written
+      back into the state.
 
-修法是 `fill_value=np.nan` + 全面 `nanmean`。本檔把「改壞了就會紅」的
-性質全部鎖住。
+The fix is `fill_value=np.nan` plus nan-aware means. These tests pin down the
+properties that break if either half is undone.
 
-注意:這裡直接測 `DLAMPty_inference` 內的兩個轉換函式與 `lonlat_uniformizer`,
-不需要 onnx 權重。
+No onnx weights needed: this exercises the two transforms and lonlat_uniformizer
+directly.
 """
 import numpy as np
 import pytest
@@ -25,7 +28,7 @@ import pytest
 from DLAMPty_inference import latlon_to_polar, polar_to_latlon
 from utils.data_processor import lonlat_uniformizer
 
-# 與 predict_one_step 內的呼叫一致
+# Same values predict_one_step uses for the baseline model.
 R, THETA, R_MAX = 201, 180, 40.0
 N = 81
 CENTER = (40.0, 40.0)
@@ -34,9 +37,10 @@ LON0, LAT0 = 130.0, 15.0
 
 
 def make_lonlat():
-    """造一個中心在 (130°E, 15°N)、0.25° 的乾淨 lon/lat 場,形狀 (81, 81, 2)。
+    """A clean lon/lat field centred at (130E, 15N) with 0.25 deg spacing.
 
-    緯度**由北往南遞減**,與 ERA5 及本專案的資料一致 —— 方向測試靠這個。
+    Latitude DECREASES with row index, matching ERA5 and this project's data.
+    The direction test below depends on that.
     """
     lon2d, lat2d = np.meshgrid(
         LON0 + (np.arange(N) - 40) * RES,
@@ -52,26 +56,26 @@ def roundtrip(sfc, fill_value):
 
 
 # --------------------------------------------------------------------------
-# 幾何:圓裝不滿方,這是問題的源頭
+# Geometry: the disc does not fill the square. This is the root of B1.
 # --------------------------------------------------------------------------
 
 def test_circle_does_not_fill_square():
-    """r_max=40 的圓只蓋住 81×81 的 76.6%,四角必然沒有資料。
+    """A radius-40 disc covers 76.6% of an 81x81 grid; the corners have no data.
 
-    這不是 bug 而是幾何事實,但它是 B1 的前提 —— 鎖住它,才能保證
-    「角落要怎麼填」這個問題不會被誰不小心改掉 r_max 而消失。
+    Not a bug, just geometry - but pinning it means nobody can make the question
+    "what goes in the corners" disappear by quietly changing r_max.
     """
     yy, xx = np.meshgrid(np.arange(N) - 40.0, np.arange(N) - 40.0, indexing="ij")
     inside = np.hypot(xx, yy) <= R_MAX
     assert inside.sum() == 5025
     assert (~inside).sum() == 1536
     assert 0.76 < inside.mean() < 0.77
-    # 角落離中心 √(40²+40²) = 56.6 格,遠在半徑 40 之外
+    # Corner-to-centre distance is sqrt(40^2+40^2) = 56.6 cells, well outside.
     assert np.hypot(40.0, 40.0) > R_MAX
 
 
 # --------------------------------------------------------------------------
-# B1:圓外必須是 NaN,圓內必須完好
+# B1: outside must be NaN, inside must survive
 # --------------------------------------------------------------------------
 
 def test_outside_is_nan_and_inside_is_exact():
@@ -79,20 +83,19 @@ def test_outside_is_nan_and_inside_is_exact():
     yy, xx = np.meshgrid(np.arange(N) - 40.0, np.arange(N) - 40.0, indexing="ij")
     inside = np.hypot(xx, yy) <= R_MAX
 
-    assert np.isnan(back[~inside]).all(), "圓外應該全部是 NaN"
-    assert not np.isnan(back[inside]).any(), "圓內不該出現 NaN"
+    assert np.isnan(back[~inside]).all(), "everything outside the disc should be NaN"
+    assert not np.isnan(back[inside]).any(), "nothing inside the disc should be NaN"
 
     truth = make_lonlat()
-    # 圓內是雙線性內插,不會逐位元相同,但誤差應該遠小於一格(0.25°)
+    # Bilinear interpolation, so not bit-identical, but far below one cell (0.25 deg).
     assert np.abs(back[inside] - truth[inside]).max() < 0.05
 
 
 # --------------------------------------------------------------------------
-# B2:中心必須算對,而且座標軸方向不能反
+# B2: the centre must survive, and the axes must not flip
 # --------------------------------------------------------------------------
 
 def test_center_survives_roundtrip():
-    """一次來回之後,推得的中心必須還在原地(誤差 < 0.01°)。"""
     back = roundtrip(make_lonlat(), np.nan)
     lon, lat = lonlat_uniformizer(back[:, :, 0], back[:, :, 1], True, RES)
 
@@ -101,26 +104,27 @@ def test_center_survives_roundtrip():
 
 
 def test_axis_direction_preserved():
-    """經度遞增、緯度遞減。
+    """Longitude increasing, latitude decreasing.
 
-    這條看似瑣碎,卻是 nanmean 修正裡**最容易漏掉**的一環:
-    `lonlat_uniformizer` 用 `np.diff(...).mean()` 的正負號決定軸的方向。
-    若那兩個 mean 沒改成 nanmean,結果是 NaN,而
-    `specify_resolution * lon_res >= 0` 對 NaN 恆為 False
-    ⇒ 經度軸被整個反向,且不會有任何錯誤訊息。
+    This looks trivial but is the easiest part of the nan-aware fix to miss.
+    `lonlat_uniformizer` decides each axis's direction from the SIGN of
+    `np.diff(...).mean()`. Leave those two means non-nan-aware and they evaluate
+    to NaN; `specify_resolution * lon_res >= 0` is then always False and the
+    longitude axis is silently reversed.
     """
     back = roundtrip(make_lonlat(), np.nan)
     lon, lat = lonlat_uniformizer(back[:, :, 0], back[:, :, 1], True, RES)
 
-    assert lon[1] - lon[0] == pytest.approx(+RES, abs=1e-9), "經度必須遞增"
-    assert lat[1] - lat[0] == pytest.approx(-RES, abs=1e-9), "緯度必須遞減"
+    assert lon[1] - lon[0] == pytest.approx(+RES, abs=1e-9), "longitude must increase"
+    assert lat[1] - lat[0] == pytest.approx(-RES, abs=1e-9), "latitude must decrease"
 
 
 def test_center_stable_over_many_steps():
-    """自迴歸情境:把上一步算出的軸寫回場,再跑一次(模擬 predict_one_step)。
+    """Autoregressive case: write the derived axis back and go round again.
 
-    B2 的殺傷力在於**會複利** —— 填 0 時每步乘 0.766,五步後
-    130°E 會掉到 34°E。修好之後應該完全不漂移。
+    What made B2 dangerous is that it COMPOUNDS - with fill 0 the centre is
+    multiplied by 0.766 per step, so 130E reaches 34E after five. Fixed, it must
+    not drift at all.
     """
     cur = make_lonlat()
     for _ in range(5):
@@ -133,31 +137,31 @@ def test_center_stable_over_many_steps():
 
 
 # --------------------------------------------------------------------------
-# 負向對照:證明這組測試真的抓得到 B1/B2(否則它可能只是恆真)
+# Negative control: prove these tests can actually see B1/B2
 # --------------------------------------------------------------------------
 
 def test_fill_zero_reproduces_the_bug():
-    """故意用舊的 fill_value=0.0,必須重現 ×0.766 的塌縮。
+    """Deliberately use the old fill_value=0.0 and reproduce the 0.766x collapse.
 
-    沒有這條,上面幾個測試無法證明自己有鑑別力。
+    Without this, the tests above cannot demonstrate they have any teeth.
     """
     back = roundtrip(make_lonlat(), 0.0)
     lon, lat = lonlat_uniformizer(back[:, :, 0], back[:, :, 1], True, RES)
 
-    ratio = 5025 / (N * N)                      # 圓佔方的面積比 ≈ 0.766
+    ratio = 5025 / (N * N)                      # disc-to-square area ratio, ~0.766
     assert np.nanmean(lon) == pytest.approx(LON0 * ratio, rel=0.02)
     assert np.nanmean(lat) == pytest.approx(LAT0 * ratio, rel=0.02)
-    # 換算成距離:經度偏掉超過 3,000 km
+    # In distance terms: longitude is off by more than 3,000 km.
     err_km = (LON0 - np.nanmean(lon)) * 111 * np.cos(np.deg2rad(LAT0))
     assert err_km > 3000
 
 
 # --------------------------------------------------------------------------
-# nanmean 的向後相容:笛卡兒路徑(無 NaN)行為不能變
+# Backward compatibility: the Cartesian path has no NaN and must be unchanged
 # --------------------------------------------------------------------------
 
 def test_cartesian_path_unchanged():
-    """沒有 NaN 時 nanmean ≡ mean,原本的笛卡兒推論路徑不受影響。"""
+    """With no NaN present nanmean == mean, so Cartesian inference is unaffected."""
     sfc = make_lonlat()
     lon, lat = lonlat_uniformizer(sfc[:, :, 0], sfc[:, :, 1], True, RES)
 

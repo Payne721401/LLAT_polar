@@ -1,9 +1,11 @@
-"""不需訓練就能測的『可訓練性 / 架構健全性』檢查。
+"""Trainability / structural-soundness checks that need no training.
 
-- test_backward_grad_coverage:backward 跑得動、每個參數都收到有限梯度
-  (抓「斷開的元件」「NaN/Inf 梯度」——這些跟權重值無關,是架構性質)。
-- test_dead_bias_landmine:記錄地雷 3(earth_specific_bias 目前非 Parameter、
-  全零、不訓練)。修好後請把這個測試反過來 assert。
+- test_backward_grad_coverage: backward runs and every parameter receives a
+  finite gradient. This catches detached components and NaN/Inf gradients, which
+  are properties of the architecture rather than of any particular weights.
+- test_dead_bias_landmine: records landmine 3 - earth_specific_bias is currently
+  not a Parameter, is all zeros, and never trains. Flip this assertion once it
+  is fixed.
 """
 import pytest
 import torch
@@ -20,7 +22,7 @@ CFG = dict(
 def test_backward_grad_coverage():
     torch.manual_seed(0)
     m = PanguPolarModel(**CFG)
-    m.eval()   # 關 DropPath,讓所有路徑都在、梯度覆蓋確定
+    m.eval()   # disable DropPath so every path is live and coverage is deterministic
     g = torch.Generator().manual_seed(1)
     u = torch.randn(1, 13, 201, 180, 6, generator=g)
     s = torch.randn(1, 201, 180, 20, generator=g)
@@ -32,15 +34,18 @@ def test_backward_grad_coverage():
     no_grad = [n for n, p in m.named_parameters() if p.requires_grad and p.grad is None]
     nonfinite = [n for n, p in m.named_parameters()
                  if p.grad is not None and not torch.isfinite(p.grad).all()]
-    assert not no_grad, f"未收到梯度的參數(可能斷開): {no_grad[:10]}"
-    assert not nonfinite, f"梯度非有限(NaN/Inf): {nonfinite[:10]}"
+    assert not no_grad, f"parameters received no gradient (possibly detached): {no_grad[:10]}"
+    assert not nonfinite, f"non-finite gradients (NaN/Inf): {nonfinite[:10]}"
 
 
 def test_dead_bias_landmine():
-    """地雷 3:相對位置 bias 目前是死的(非 Parameter)。修好後請 flip 這個測試。"""
+    """Landmine 3: the relative position bias is dead (not a Parameter).
+
+    Flip this test once it is fixed.
+    """
     m = PanguPolarModel(**CFG)
     bias_params = [n for n, _ in m.named_parameters() if "earth_specific_bias" in n]
     assert bias_params == [], (
-        "earth_specific_bias 已成為 Parameter —— 地雷 3 已修,請把本測試改成"
-        "『assert bias 存在且形狀正確』"
+        "earth_specific_bias is now a Parameter - landmine 3 has been fixed, so "
+        "change this test to assert that the bias exists and has the right shape"
     )
