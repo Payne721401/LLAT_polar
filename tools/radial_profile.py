@@ -17,6 +17,11 @@ A radial profile separates them: a step moves when the boundary radius moves, a
 gradient does not. Run the same forecast twice with different --hold-radius and
 compare, or compare standalone against one-way.
 
+Pass --era5 as well. A TC is only approximately axisymmetric and the outer domain
+carries real weather - fronts, cloud bands - so azimuthal variability genuinely
+rises with radius. Without truth on the same axes there is no way to tell how
+much of a forecast's rise is structure it should have.
+
 Usage
 -----
     python tools/radial_profile.py \
@@ -25,6 +30,7 @@ Usage
         --lead 24 --out radial.png
 """
 import argparse
+import datetime
 import importlib.util
 import os
 
@@ -103,6 +109,15 @@ def main(args):
     cols = [(name, pf.load_run(path, args.lead, pf.read_meta(path)))
             for name, path in runs]
 
+    if args.era5:
+        if not (args.tc_id and args.init):
+            raise SystemExit("--era5 also needs --tc-id and --init")
+        valid = (datetime.datetime.strptime(args.init, "%Y%m%d%H")
+                 + datetime.timedelta(hours=args.lead))
+        n = cols[0][1].sfc.shape[0]
+        cols.insert(0, ("ERA5", pf.load_era5(args.era5, args.tc_id, valid, n,
+                                             pf.read_meta(runs[0][1]))))
+
     fig, axes = plt.subplots(2, len(FIELDS), figsize=(4.2 * len(FIELDS), 6.4),
                              squeeze=False, sharex=True)
     for c, (label, get, unit) in enumerate(FIELDS):
@@ -140,6 +155,12 @@ if __name__ == "__main__":
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--run", action="append", required=True, metavar="NAME=PATH")
     p.add_argument("--lead", type=int, required=True)
+    p.add_argument("--era5", default=None,
+                   help="directory of {TC_ID}_{time}_combined.nc; adds truth as a "
+                        "reference curve, without which a rise toward the rim "
+                        "cannot be told from real outer-domain weather")
+    p.add_argument("--tc-id", default=None)
+    p.add_argument("--init", default=None, help="YYYYMMDDHH")
     p.add_argument("--out", default="radial.png")
     p.add_argument("--mark", type=float, nargs="*", default=[8.0, 9.0, 10.0],
                    help="radii to mark, in degrees; put your --hold-radius here")
