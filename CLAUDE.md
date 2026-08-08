@@ -19,17 +19,20 @@ notes under `analysis/`; what was *done* belongs in the git log.
 All three forecast modes run end to end — standalone and one-way both completed +24 h on
 202421W — plus the comparison and radial-diagnostic figures.
 
-**In progress.** Reading the first coupled forecast. Open questions: how much of the
-standalone track error (~3° in longitude at +24 h) was the frozen environment, and whether
-the rim artefact in MSLP and 10 m wind is a boundary seam or the outer-ring
-under-constraint. `tools/radial_profile.py` separates those: a step at the boundary radius
-versus a gradual rise toward r_max.
+**In progress.** Longer forecasts, to see whether the track error growth is linear.
+See `analysis/2026-08-09_first_coupled_forecast.md`: the rim rise turned out to be real
+weather, not an artefact — one-way tracks ERA5 to within 0.12 hPa beyond r = 5 — so the
+radial loss weight is not the priority it looked like. Standalone's seam at r = 8 is real
+and coupling removes it. Track error is ~100 % along-track: the storm goes the right way
+at 62 % of observed speed.
 
 **Blocked on nothing.**
 
-**Next, in order.** (1) read the standalone vs one-way comparison. (2) P1, the patch/window
-redesign — the largest single defect, and *cheaper* in compute. (3) radial loss weight
-`w(r) = r^p` for the outer-ring artefact.
+**Next, in order.** (1) the speed bias — the frame's motion is 0.078 sigma per step and
+under 0.4 % of the surface loss, so the objective barely constrains it; weight the
+coordinate channels, or predict displacement. (2) P1, the patch/window redesign — now with
+direct evidence, the forecast inner core is 30 % more asymmetric than truth at r = 1.9,
+which is exactly where a 2°-wide radial patch would hurt.
 
 **Recently learned, worth not relearning.** NaN outside the polar disc is not inert: the
 rim of `latlon_to_polar` interpolates bilinearly and reaches across it, so 23.4 % NaN
