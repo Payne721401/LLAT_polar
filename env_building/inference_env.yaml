@@ -69,7 +69,14 @@ dependencies:
   - pytorch-gpu
   - cuda-version=12.8
 
+  # Needed only to UNPICKLE the FCNV2 checkpoint, which is loaded with
+  # weights_only=False and contains a config object of this type alongside the
+  # weights. No code here imports it, so it looks gratuitous until torch.load
+  # fails several GB into a 3.3 GB file with ModuleNotFoundError: 'ruamel'.
+  - ruamel.yaml
+
   - pip:
       - onnxruntime
       - xarray-regrid
+      # FCNV2 is an SFNO; this provides the spherical transforms.
       - torch-harmonics
