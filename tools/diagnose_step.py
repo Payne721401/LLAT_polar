@@ -20,12 +20,16 @@ Usage
 """
 import argparse
 import os
+import sys
 import warnings
 
 import numpy as np
 import xarray as xr
 
 warnings.filterwarnings("ignore")
+
+# Run from tools/, so sys.path[0] is tools/ and the package root is not on it.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from DLAMPty_inference import (DLAMPty_model, latlon_to_polar,  # noqa: E402
                                polar_to_latlon)
@@ -50,6 +54,22 @@ def report(tag, arr, coord_idx=None):
 
 def main(args):
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    if args.with_fcnv2:
+        # Reproduce the one-way condition. standalone works and one-way does not,
+        # and the only difference before the failing call is that FCNV2 has been
+        # loaded and stepped - so run it here and compare the two reports.
+        from global_model.FCNV2.FCNV2_inference import FCNV2_model
+        print(f"loading FCNV2 from {args.with_fcnv2} on {args.fcnv2_device}")
+        f = FCNV2_model(args.with_fcnv2, device=args.fcnv2_device)
+        f.initialize()
+        if args.fcnv2_ic:
+            state = np.load(args.fcnv2_ic)
+            print(f"  stepping FCNV2 once, input {state.shape}")
+            state = f.predict_one_step(state)
+            print(f"  FCNV2 output {state.shape}, "
+                  f"NaN {100*np.isnan(state).mean():.2f}%")
+
     m = DLAMPty_model(args.model_yaml, root_dir=root, device='cpu')
     m.initialize()
     n = m.cartesian_n
@@ -119,4 +139,9 @@ if __name__ == "__main__":
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model-yaml", default="onnx/LLAT_polar_vtvr_v1.yaml")
     p.add_argument("--ic", required=True, help="a *_combined.nc initial condition")
+    p.add_argument("--with-fcnv2", default=None, metavar="WEIGHT_DIR",
+                   help="load and step FCNV2 first, reproducing --mode one-way")
+    p.add_argument("--fcnv2-ic", default=None,
+                   help="analysis_*.npy for FCNV2; needed to actually step it")
+    p.add_argument("--fcnv2-device", default="cuda")
     main(p.parse_args())
