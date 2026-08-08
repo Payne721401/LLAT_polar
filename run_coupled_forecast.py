@@ -229,12 +229,10 @@ def main(args):
                 raise SystemExit(
                     f"--fcnv2-device {args.fcnv2_device} but torch reports no CUDA "
                     f"(torch {torch.__version__}, built against CUDA "
-                    f"{torch.version.cuda}).
-"
+                    f"{torch.version.cuda}).\n"
                     "Either this torch is a CPU-only build - conda-forge's plain "
                     "`pytorch` resolves to one, use `pytorch-gpu` - or the machine "
-                    "has no visible GPU.
-"
+                    "has no visible GPU.\n"
                     "To carry on now, pass --fcnv2-device cpu. That is fine for a "
                     "short forecast: 24 h is four FCNV2 steps.")
         fcnv2 = FCNV2_model(args.fcnv2_weight, device=args.fcnv2_device)
