@@ -9,26 +9,35 @@ Read the "Invariants" section before changing anything under `DLAMPty_inference.
 
 ---
 
-## Current status — 2026-08-08
+## Current status — 2026-08-09
 
 Keep this block short and current. It is the first thing an agent reads, so it should
 answer "where is this project" in ten lines, not narrate history. Detail belongs in dated
 notes under `analysis/`; what was *done* belongs in the git log.
 
 **Works.** Training (val loss 0.24997, bf16 + LR 5e-5). ONNX export with verification.
-Standalone inference end to end, plus comparison and radial-diagnostic figures.
+All three forecast modes run end to end — standalone and one-way both completed +24 h on
+202421W — plus the comparison and radial-diagnostic figures.
 
-**In progress.** First coupled forecast. Standalone at +24 h now shows a ~3° longitude
-error, down from ~6° before the frozen-coordinate fix, and a visible artefact in MSLP and
-10 m wind near the rim — cause not yet separated, run `tools/radial_profile.py` with two
-different `--hold-radius` values to tell a boundary seam from outer-ring noise.
+**In progress.** Reading the first coupled forecast. Open questions: how much of the
+standalone track error (~3° in longitude at +24 h) was the frozen environment, and whether
+the rim artefact in MSLP and 10 m wind is a boundary seam or the outer-ring
+under-constraint. `tools/radial_profile.py` separates those: a step at the boundary radius
+versus a gradual rise toward r_max.
 
-**Blocked on nothing.** FCNV2 weights, IC data and best-track are all readable on the lab
-host.
+**Blocked on nothing.**
 
-**Next, in order.** (1) one-way coupling, to remove the frozen boundary as a confounder.
-(2) P1, the patch/window redesign — it is the largest single defect and is *cheaper* in
-compute. (3) radial loss weight `w(r) = r^p` for the outer-ring artefact.
+**Next, in order.** (1) read the standalone vs one-way comparison. (2) P1, the patch/window
+redesign — the largest single defect, and *cheaper* in compute. (3) radial loss weight
+`w(r) = r^p` for the outer-ring artefact.
+
+**Recently learned, worth not relearning.** NaN outside the polar disc is not inert: the
+rim of `latlon_to_polar` interpolates bilinearly and reaches across it, so 23.4 % NaN
+corners become 2.9 % of the polar array, and one NaN makes the entire model output NaN
+because attention mixes every token. Corners must be refilled after *every* step. The
+symptom appeared two stages downstream, in `lonlat_uniformizer` and then `xarray_regrid`,
+and the first diagnosis from that traceback was wrong — the guard now in
+`predict_one_step`, which names the offending channels, is what corrected it.
 
 ---
 
