@@ -9,6 +9,29 @@ Read the "Invariants" section before changing anything under `DLAMPty_inference.
 
 ---
 
+## Current status — 2026-08-08
+
+Keep this block short and current. It is the first thing an agent reads, so it should
+answer "where is this project" in ten lines, not narrate history. Detail belongs in dated
+notes under `analysis/`; what was *done* belongs in the git log.
+
+**Works.** Training (val loss 0.24997, bf16 + LR 5e-5). ONNX export with verification.
+Standalone inference end to end, plus comparison and radial-diagnostic figures.
+
+**In progress.** First coupled forecast. Standalone at +24 h now shows a ~3° longitude
+error, down from ~6° before the frozen-coordinate fix, and a visible artefact in MSLP and
+10 m wind near the rim — cause not yet separated, run `tools/radial_profile.py` with two
+different `--hold-radius` values to tell a boundary seam from outer-ring noise.
+
+**Blocked on nothing.** FCNV2 weights, IC data and best-track are all readable on the lab
+host.
+
+**Next, in order.** (1) one-way coupling, to remove the frozen boundary as a confounder.
+(2) P1, the patch/window redesign — it is the largest single defect and is *cheaper* in
+compute. (3) radial loss weight `w(r) = r^p` for the outer-ring artefact.
+
+---
+
 ## What this is, in three lines
 
 TC forecasting model: Pangu-Weather 3DEST (3-D Swin transformer, U-Net arrangement) on a
