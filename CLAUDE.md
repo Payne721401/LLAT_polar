@@ -185,10 +185,15 @@ not meaningful.
 
 ## Relationship to `couple_FCNV2_LLAT`
 
-That repository holds the coupling workflow: FCNV2 (third-party, Apache 2.0) and the
-exchange helpers shared with the Cartesian model. `run_coupled_forecast.py --coupling-root`
-points at a checkout of it rather than vendoring, so this repo stays limited to code the
-project owns. `POLAR_ANALYSIS_REPORT.md` there is the long-form investigation record.
+That repository is where FCNV2 and the exchange helper came from; both are now **vendored**
+here under `global_model/FCNV2/` and `interaction_tools/`, so this repo runs on its own.
+The trigger was practical: the polar branch of the exchange helper was never pushed and
+existed only as an uncommitted working-tree change, so depending on that checkout meant
+depending on something that did not exist remotely.
+
+The cost is real — the exchange helper is shared with the Cartesian workflow upstream, so a
+fix made there will not arrive here. If it is ever edited upstream, diff the two.
+`POLAR_ANALYSIS_REPORT.md` there remains the long-form investigation record.
 
 The exchange looks channels up by name (`.index('u10')`), which is why the driver hands it
 the **external** names — see invariant 2.

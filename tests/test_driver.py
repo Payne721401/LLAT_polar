@@ -94,9 +94,6 @@ def test_coupling_info_exposes_uv_names():
     assert info['surface_vars'][2:] == llat.surface_variables[2:]
 
 
-def test_coupling_root_validation(tmp_path):
-    with pytest.raises(FileNotFoundError, match="coupling repo"):
-        rcf.add_coupling_repo(str(tmp_path))
 
 
 def test_outside_mask_matches_the_coupling_radius():

@@ -38,17 +38,28 @@ Output layout
 Deliberately identical to the original, so the lab's existing plotting notebook
 reads it by changing one version string:
 
-    {out}/{TC_ID}/2_way_circle_couple_model_{onnx_version}/start_from_{YYYYMMDDHH}/
-        FCNV2/forecast/output_weather_{HHH}h.npy
+    {out}/{TC_ID}/{mode}_{onnx_version}/start_from_{YYYYMMDDHH}/
+        FCNV2/forecast/output_weather_{HHH}h.npy      (coupled modes only)
         DLAMPty/forecast/output_upper_{HHH}h.npy
         DLAMPty/forecast/output_sfc_{HHH}h.npy
+        run_meta.yaml
 
-Why FCNV2 is not vendored here
-------------------------------
-FCNV2 is a third-party global model the lab already carries, and the coupling
-helpers are shared with the Cartesian workflow. Duplicating them into this repo
-would fork code this project does not own. --coupling-root points at that repo
-instead; only the driver and the regional model live here.
+The two-way directory keeps its original name, 2_way_circle_couple_model_*, so
+the lab's plotting notebook reads it unchanged; one-way uses that notebook's
+sibling name. Each mode gets its own directory, or a later run would overwrite an
+earlier one that is not comparable to it.
+
+Vendored third-party code
+-------------------------
+global_model/FCNV2/ and interaction_tools/ are copied from the lab's coupling
+repository so that this one runs on its own. FCNV2 is NVIDIA's FourCastNet v2
+under Apache 2.0, which permits redistribution provided the licence travels with
+it; see global_model/FCNV2/LICENSE_FourCastNetv2.
+
+The copy is deliberate rather than ideal: the exchange helper is shared with the
+Cartesian workflow upstream, so a fix made there will not arrive here. It is
+small and rarely touched, and the alternative - depending on an unpushed branch
+of another repository - proved worse in practice.
 """
 import argparse
 import datetime
@@ -74,20 +85,6 @@ warnings.filterwarnings("ignore", message=".*no explicit representation of timez
 # 721x1440 (0.25 deg) FCNV2 grid. Western North Pacific: 10S-80N, 80E-180E.
 # Saving the whole globe every 6 h would be ~50x larger for no added value.
 WP_BOX = dict(lat_min=-10.0, lat_max=80.0, lon_min=80.0, lon_max=180.0)
-
-
-def add_coupling_repo(root):
-    """Put the coupling repo on sys.path so FCNV2 and the exchange import."""
-    root = os.path.abspath(os.path.expanduser(root))
-    for probe in ("global_model/FCNV2/FCNV2_inference.py",
-                  "interaction_tools/FCNV2_DLAMPty_interaction.py"):
-        if not os.path.exists(os.path.join(root, probe)):
-            raise FileNotFoundError(
-                f"--coupling-root {root} does not look like the coupling repo: "
-                f"{probe} is missing")
-    if root not in sys.path:
-        sys.path.insert(0, root)
-    return root
 
 
 def wp_indices():
@@ -206,19 +203,15 @@ def main(args):
     print(f"mode          : {args.mode}")
 
     if standalone:
-        # Nothing from the coupling repo is imported, so this mode runs with only
-        # this repository plus the .onnx: no FCNV2 weights, no GPU, no second
-        # checkout. It exercises the entire polar chain - conversion, wind
-        # rotation, centre estimation, additional-variable recomputation - which
-        # makes it the right first thing to run.
+        # FCNV2 is not imported at all here, so this mode needs neither its
+        # weights nor torch_harmonics. It exercises the entire polar chain -
+        # conversion, wind rotation, centre estimation, additional-variable
+        # recomputation - which makes it the right first thing to run.
         fcnv2 = transfer_FCNV2_DLAMPty_with_radius = None
-        print("coupling repo : (not needed)")
     else:
-        coupling_root = add_coupling_repo(args.coupling_root)
         from global_model.FCNV2.FCNV2_inference import FCNV2_model
         from interaction_tools.FCNV2_DLAMPty_interaction import (
             transfer_FCNV2_DLAMPty_with_radius)
-        print(f"coupling repo : {coupling_root}")
 
     llat = DLAMPty_model(args.model_yaml, root_dir=os.path.dirname(
         os.path.abspath(__file__)), device=args.llat_device)
@@ -338,9 +331,6 @@ if __name__ == "__main__":
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--tc-id", required=True, help="e.g. 202421W")
     p.add_argument("--model-yaml", default="onnx/LLAT_polar_vtvr_v1.yaml")
-    p.add_argument("--coupling-root", default=None,
-                   help="checkout of the coupling repo (FCNV2 + interaction_tools); "
-                        "not needed for --mode standalone")
     p.add_argument("--fcnv2-weight", default=None,
                    help="directory holding weights.tar, global_means.npy, "
                         "global_stds.npy; not needed for --mode standalone")
@@ -369,10 +359,6 @@ if __name__ == "__main__":
     p.add_argument("--max-starts", type=int, default=0,
                    help="0 = every initial time; use 1 for a smoke test")
     a = p.parse_args()
-    if a.mode != 'standalone':
-        missing = [n for n, v in (('--coupling-root', a.coupling_root),
-                                  ('--fcnv2-weight', a.fcnv2_weight)) if not v]
-        if missing:
-            p.error(f"--mode {a.mode} needs {' and '.join(missing)} "
-                    "(or use --mode standalone)")
+    if a.mode != 'standalone' and not a.fcnv2_weight:
+        p.error(f"--mode {a.mode} needs --fcnv2-weight (or use --mode standalone)")
     main(a)

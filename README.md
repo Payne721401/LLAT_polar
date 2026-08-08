@@ -69,6 +69,8 @@ Throughput improved ≈ 80× over the inherited baseline, decomposable and verif
 ├── train.py                     # LightningCLI entry point
 ├── config.yaml                  # single source of truth for training
 ├── run_coupled_forecast.py      # forecast driver: standalone / one-way / two-way
+├── global_model/FCNV2/          # vendored FourCastNet v2 (NVIDIA, Apache 2.0)
+├── interaction_tools/           # vendored FCNV2 <-> LLAT exchange
 ├── DLAMPty_inference.py         # inference wrapper (Cartesian ⇄ polar, vt/vr ⇄ u/v)
 ├── export_onnx.py               # checkpoint → ONNX, with cross-checks
 ├── onnx/
@@ -226,10 +228,16 @@ derived-variable recomputation — so it is the smallest thing that either produ
 forecast or tells you what is broken. The forecast degrades from the edge inwards, so it
 is a validation tool, not a scientific result.
 
-`one-way` and `two-way` additionally need `--coupling-root` (a checkout of the coupling
-repository, supplying FCNV2 and the exchange helpers) and `--fcnv2-weight`. FCNV2 is not
-vendored here: it is third-party (Apache 2.0, NVIDIA) and its exchange helpers are shared
-with the Cartesian workflow, so forking them would mean owning code this project does not.
+`one-way` and `two-way` additionally need `--fcnv2-weight`. FCNV2 itself is vendored under
+`global_model/FCNV2/` — NVIDIA's FourCastNet v2, Apache 2.0, which permits redistribution
+provided the licence travels with it (`LICENSE_FourCastNetv2`). The exchange helper is
+vendored under `interaction_tools/`.
+
+That copy is deliberate but not ideal: the exchange helper is shared with the Cartesian
+workflow upstream, so a fix made there will not arrive here. It is 93 KB and rarely
+touched, and the alternative — depending on an unpushed branch of another repository —
+proved worse in practice. FCNV2 is an SFNO, so the coupled modes also need
+`torch_harmonics`; standalone imports none of it.
 
 ### Model cards
 

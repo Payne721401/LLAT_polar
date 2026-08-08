@@ -56,6 +56,7 @@ dependencies:
 
   # --- global model (FCNV2) -------------------------------------------------
   # Only needed for --mode one-way / two-way; standalone mode never imports it.
+  # FCNV2 is an SFNO, so it needs torch_harmonics for the spherical transforms.
   # Pulls a CUDA build on Linux; the driver on the lab host reports CUDA 13.0,
   # which runs a 12.x runtime fine since NVIDIA drivers are backward compatible.
   - pytorch
@@ -64,3 +65,4 @@ dependencies:
   - pip:
       - onnxruntime
       - xarray-regrid
+      - torch-harmonics
