@@ -558,6 +558,27 @@ class DLAMPty_model:
         input_upper, _, theta_deg = latlon_to_polar(input_upper, **polar_kw)
         input_surface, _, _ = latlon_to_polar(input_surface, **polar_kw)
 
+        # NaN anywhere in the sampled disc destroys the whole forecast, not just
+        # the cell it sits in: attention mixes every token, so one NaN makes the
+        # entire output NaN, and the first visible symptom is the TC centre going
+        # NaN several stages downstream. NaN OUTSIDE the disc is fine and normal -
+        # latlon_to_polar never samples r > r_max - which is why this checks after
+        # the conversion rather than before.
+        for name, arr, names in (('upper', input_upper, self.upper_variables_external),
+                                 ('surface', input_surface,
+                                  self.surface_variables_external + ['lon', 'lat'])):
+            bad = np.isnan(arr).any(axis=tuple(range(arr.ndim - 1)))
+            if bad.any():
+                which = [names[i] if i < len(names) else f"channel {i}"
+                         for i in np.flatnonzero(bad)]
+                raise ValueError(
+                    f"NaN inside the polar disc in the {name} input, "
+                    f"channels: {', '.join(which)}.\n"
+                    "Something upstream left a hole in the sampled region. A "
+                    "likely source is a boundary exchange that replaces only some "
+                    "variables, leaving the rest with the NaN corners "
+                    "polar_to_latlon wrote on the previous step.")
+
         # S4: callers speak u/v; the model wants vt/vr. Rotate here, in polar
         # space, where theta is exact per column.
         theta_rad = np.deg2rad(theta_deg)

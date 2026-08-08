@@ -153,6 +153,36 @@ def hold_boundary(up, sfc, up0, sfc0, mask, n_coord=2):
     return up, sfc
 
 
+def fill_remaining_nan(up, sfc, up0, sfc0):
+    """Patch any NaN left in the state from the initial condition.
+
+    The exchange replaces six surface variables and five upper ones;
+    changing_additional_information recomputes several more. Five are covered by
+    neither - d2m, tp, mtnlwrf, sst_filled and w - so they keep the NaN corners
+    polar_to_latlon wrote on the previous step.
+
+    Those corners are outside the polar disc and never sampled directly, which
+    makes them look harmless. They are not: latlon_to_polar interpolates
+    bilinearly, so a point on the rim at r = r_max averages four Cartesian cells
+    and some of them lie just outside. One NaN reaching the model is enough for
+    all of it - attention mixes every token - so the entire forecast comes back
+    NaN, and the first visible symptom is the TC centre going NaN several stages
+    later. This is what made one-way fail at the step after the first exchange
+    while standalone, which refills every channel each step, ran to completion.
+
+    The initial condition is stale by the time this is used, but these are cells
+    outside the model's own domain that only matter through rim interpolation, so
+    a stale finite value is far better than a NaN.
+    """
+    m = np.isnan(sfc)
+    if m.any():
+        sfc[m] = sfc0[m]
+    m = np.isnan(up)
+    if m.any():
+        up[m] = up0[m]
+    return up, sfc
+
+
 def write_run_meta(path, llat, args, init):
     """Record what produced this run, next to the output it produced.
 
@@ -316,10 +346,24 @@ def main(args):
             for half in (3, 6):
                 hh = i * 6 - 6 + half
                 target = initial_time + datetime.timedelta(hours=hh)
-                up, sfc = llat.predict_one_step(up, sfc)
-                np.save(os.path.join(llat_dir, f"output_upper_{hh:0>3}h"), up)
-                np.save(os.path.join(llat_dir, f"output_sfc_{hh:0>3}h"), sfc)
-                up, sfc = llat.changing_additional_information(up, sfc, target)
+                # Say which step failed. A traceback from inside the derived-
+                # variable chain names a line in the loop but not the iteration,
+                # and "first step" versus "after the first exchange" points at
+                # completely different causes.
+                try:
+                    up, sfc = llat.predict_one_step(up, sfc)
+                    np.save(os.path.join(llat_dir, f"output_upper_{hh:0>3}h"), up)
+                    np.save(os.path.join(llat_dir, f"output_sfc_{hh:0>3}h"), sfc)
+                    up, sfc = llat.changing_additional_information(up, sfc, target)
+                except Exception as e:
+                    nan_sfc = 100 * np.isnan(sfc).mean()
+                    nan_lon = 100 * np.isnan(sfc[..., -2]).mean()
+                    raise RuntimeError(
+                        f"failed at +{hh:03d} h (block {i}, half-step {half}), "
+                        f"{'after' if i > 1 else 'before'} the first exchange; "
+                        f"surface NaN {nan_sfc:.1f}%, lon channel NaN "
+                        f"{nan_lon:.1f}% (23.4% is the expected disc corners)"
+                    ) from e
                 if standalone:
                     # Every step, not every 6 h: with no global model there is
                     # nothing else to stop the NaN corners entering the next input.
@@ -335,6 +379,10 @@ def main(args):
                 # lateral boundary from FCNV2, the global model is left untouched.
                 if args.mode == 'two-way':
                     fcnv2_state = new_fcnv2
+                # The exchange does not cover every channel, so patch what it
+                # left. Without this the next step samples NaN at the rim and the
+                # whole forecast comes back NaN.
+                up, sfc = fill_remaining_nan(up, sfc, up0, sfc0)
 
             if i % 4 == 0:
                 print(f"  +{i*6:0>3} h  {target:%Y-%m-%d %H}Z")

@@ -211,3 +211,60 @@ def test_each_mode_writes_to_its_own_directory():
         ('one-way', 'one_way_couple_model'),
         ('standalone', 'standalone'))}
     assert len(set(names.values())) == 3
+
+
+def test_corner_nan_reaches_the_disc_through_rim_interpolation():
+    """NaN outside the disc is not harmless: the rim interpolates across it.
+
+    polar_to_latlon leaves r > r_max undefined, which looks safe because
+    latlon_to_polar only samples r <= r_max. But it samples bilinearly, so a
+    point exactly on the rim averages four Cartesian cells and some of them lie
+    just outside. Measured: 23.4 % NaN in the corners becomes 2.9 % of the polar
+    array, in the outer two of 41 rings.
+
+    That is enough to lose everything. Attention mixes every token, so one NaN
+    makes the entire model output NaN - which is why one-way failed at the step
+    after the first exchange while standalone, refilling every channel each step,
+    ran to completion.
+    """
+    from DLAMPty_inference import latlon_to_polar
+
+    n = 81
+    yy, xx = np.meshgrid(np.arange(n) - 40.0, np.arange(n) - 40.0, indexing="ij")
+    r = np.hypot(xx, yy)
+    f = np.ones((n, n, 2))
+    f[r > 40, 0] = np.nan
+
+    p, _, _ = latlon_to_polar(f, R=41, Theta=180, r_max=40.0, center_xy=(40.0, 40.0))
+    bad = np.isnan(p[..., 0])
+    assert bad.any(), "the rim should pull NaN in; if not, the mechanism changed"
+    rings = np.flatnonzero(bad.any(axis=1))
+    assert rings.min() >= 38, rings          # outer rings only
+    assert bad.mean() < 0.05                 # a small fraction, and still fatal
+
+
+def test_fill_remaining_nan_makes_the_state_safe_to_step():
+    """After patching, the polar conversion must be completely clean.
+
+    The exchange covers six surface variables and five upper ones, and
+    changing_additional_information recomputes several more, but d2m, tp,
+    mtnlwrf, sst_filled and w are covered by neither.
+    """
+    from DLAMPty_inference import latlon_to_polar
+
+    n = 81
+    yy, xx = np.meshgrid(np.arange(n) - 40.0, np.arange(n) - 40.0, indexing="ij")
+    r = np.hypot(xx, yy)
+
+    up0, sfc0 = np.zeros((13, n, n, 6)), np.zeros((n, n, 20))
+    up, sfc = np.ones((13, n, n, 6)), np.ones((n, n, 20))
+    up[:, r > 40, :] = np.nan
+    sfc[r > 40, :] = np.nan
+
+    up, sfc = rcf.fill_remaining_nan(up, sfc, up0, sfc0)
+    assert not np.isnan(up).any() and not np.isnan(sfc).any()
+    # The interior must not have been touched.
+    np.testing.assert_array_equal(sfc[r <= 40], 1.0)
+
+    p, _, _ = latlon_to_polar(sfc, R=41, Theta=180, r_max=40.0, center_xy=(40.0, 40.0))
+    assert not np.isnan(p).any(), "the rim still pulls NaN in"
