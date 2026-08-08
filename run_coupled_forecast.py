@@ -219,6 +219,24 @@ def main(args):
     info = coupling_info(llat)
 
     if not standalone:
+        # Check before loading, not after. FCNV2_inference calls torch.load with
+        # map_location=device on a 3.3 GB checkpoint, so a CPU-only torch fails
+        # several GB in, with a deserialisation error that names neither the
+        # environment nor the flag to change.
+        if args.fcnv2_device.startswith('cuda'):
+            import torch
+            if not torch.cuda.is_available():
+                raise SystemExit(
+                    f"--fcnv2-device {args.fcnv2_device} but torch reports no CUDA "
+                    f"(torch {torch.__version__}, built against CUDA "
+                    f"{torch.version.cuda}).
+"
+                    "Either this torch is a CPU-only build - conda-forge's plain "
+                    "`pytorch` resolves to one, use `pytorch-gpu` - or the machine "
+                    "has no visible GPU.
+"
+                    "To carry on now, pass --fcnv2-device cpu. That is fine for a "
+                    "short forecast: 24 h is four FCNV2 steps.")
         fcnv2 = FCNV2_model(args.fcnv2_weight, device=args.fcnv2_device)
         fcnv2.initialize()
 

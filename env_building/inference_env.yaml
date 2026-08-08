@@ -57,9 +57,16 @@ dependencies:
   # --- global model (FCNV2) -------------------------------------------------
   # Only needed for --mode one-way / two-way; standalone mode never imports it.
   # FCNV2 is an SFNO, so it needs torch_harmonics for the spherical transforms.
-  # Pulls a CUDA build on Linux; the driver on the lab host reports CUDA 13.0,
-  # which runs a 12.x runtime fine since NVIDIA drivers are backward compatible.
-  - pytorch
+  #
+  # `pytorch-gpu`, not `pytorch`: on conda-forge the plain name resolves to a
+  # CPU-only build unless the CUDA variant is asked for, and `cuda-version` alone
+  # does not force it. That mistake here produced a torch reporting
+  # cuda.is_available() False on a machine with an idle GPU, surfacing only as a
+  # confusing deserialisation error from torch.load 3 GB into loading FCNV2.
+  #
+  # The lab host's driver reports CUDA 13.0, which runs a 12.x runtime fine since
+  # NVIDIA drivers are backward compatible.
+  - pytorch-gpu
   - cuda-version=12.8
 
   - pip:
