@@ -156,23 +156,25 @@ def hold_boundary(up, sfc, up0, sfc0, mask, n_coord=2):
 def fill_remaining_nan(up, sfc, up0, sfc0):
     """Patch any NaN left in the state from the initial condition.
 
-    The exchange replaces six surface variables and five upper ones;
-    changing_additional_information recomputes several more. Five are covered by
-    neither - d2m, tp, mtnlwrf, sst_filled and w - so they keep the NaN corners
-    polar_to_latlon wrote on the previous step.
+    Every step, polar_to_latlon leaves the corners outside the disc NaN - 23.4 %
+    of the frame. Those corners look harmless because latlon_to_polar samples
+    only r <= r_max, but it samples BILINEARLY: a point on the rim averages four
+    Cartesian cells and some lie just outside. Measured, 23.4 % of NaN corners
+    becomes 2.9 % of the polar array, in the outer two of 41 rings. One NaN is
+    enough for all of it, because attention mixes every token, so the whole
+    forecast comes back NaN - and the first visible symptom is the TC centre
+    going NaN several stages later, which is why the traceback used to point at
+    lonlat_uniformizer and then at xarray_regrid, neither of them the cause.
 
-    Those corners are outside the polar disc and never sampled directly, which
-    makes them look harmless. They are not: latlon_to_polar interpolates
-    bilinearly, so a point on the rim at r = r_max averages four Cartesian cells
-    and some of them lie just outside. One NaN reaching the model is enough for
-    all of it - attention mixes every token - so the entire forecast comes back
-    NaN, and the first visible symptom is the TC centre going NaN several stages
-    later. This is what made one-way fail at the step after the first exchange
-    while standalone, which refills every channel each step, ran to completion.
+    So this has to run after EVERY step, in every mode. standalone gets it via
+    hold_boundary; the coupled modes have only the exchange, which runs every 6 h
+    at the end of a block and covers six surface variables and five upper ones -
+    so the second 3 h step of every block was reading NaN and silently writing an
+    all-NaN forecast to disk.
 
-    The initial condition is stale by the time this is used, but these are cells
-    outside the model's own domain that only matter through rim interpolation, so
-    a stale finite value is far better than a NaN.
+    The initial condition is stale by then, but these are cells outside the
+    model's own domain that matter only through rim interpolation, so a stale
+    finite value beats a NaN.
     """
     m = np.isnan(sfc)
     if m.any():
@@ -365,9 +367,13 @@ def main(args):
                         f"{nan_lon:.1f}% (23.4% is the expected disc corners)"
                     ) from e
                 if standalone:
-                    # Every step, not every 6 h: with no global model there is
-                    # nothing else to stop the NaN corners entering the next input.
                     up, sfc = hold_boundary(up, sfc, up0, sfc0, edge)
+                # Every step, in every mode. polar_to_latlon leaves NaN corners
+                # each time and the next step's rim interpolation reaches across
+                # them; the exchange runs only every 6 h and only for some
+                # channels, so the second half-step of every block was reading
+                # NaN and writing an all-NaN forecast to disk.
+                up, sfc = fill_remaining_nan(up, sfc, up0, sfc0)
 
             if not standalone:
                 new_fcnv2, up, sfc = transfer_FCNV2_DLAMPty_with_radius(
@@ -379,9 +385,9 @@ def main(args):
                 # lateral boundary from FCNV2, the global model is left untouched.
                 if args.mode == 'two-way':
                     fcnv2_state = new_fcnv2
-                # The exchange does not cover every channel, so patch what it
-                # left. Without this the next step samples NaN at the rim and the
-                # whole forecast comes back NaN.
+                # The exchange writes FCNV2 values over r >= boundary_radius,
+                # which can reintroduce NaN where FCNV2 itself has none - but
+                # patch again regardless, since the next step is a model step.
                 up, sfc = fill_remaining_nan(up, sfc, up0, sfc0)
 
             if i % 4 == 0:
