@@ -252,8 +252,15 @@ def main(args):
         starts = starts[args.start_index:args.start_index + args.max_starts]
     print(f"initial times : {len(starts)} ({starts[0]} .. {starts[-1]})")
 
-    run_root = os.path.join(args.out, args.tc_id,
-                            f"2_way_circle_couple_model_{version}")
+    # The mode is part of the directory name, or a later run silently overwrites
+    # an earlier one - the two are not comparable and nothing would say so. The
+    # two-way name is kept verbatim because the lab's plotting notebook reads it,
+    # and one_way_couple_model matches the sibling directory already in use there.
+    run_root = os.path.join(args.out, args.tc_id, {
+        'two-way': f"2_way_circle_couple_model_{version}",
+        'one-way': f"one_way_couple_model_{version}",
+        'standalone': f"standalone_{version}",
+    }[args.mode])
 
     for initial_time in starts:
         stamp = initial_time.strftime('%Y%m%d%H')

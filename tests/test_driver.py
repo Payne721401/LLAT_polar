@@ -190,3 +190,27 @@ def test_freezing_lonlat_would_halve_the_motion():
     moved = np.mean(field) - 130.0
     assert 0.9 < moved < 1.1, moved                      # 2 deg asked, ~1 delivered
     assert mask.mean() == pytest.approx(0.512, abs=0.01)
+
+
+def test_each_mode_writes_to_its_own_directory():
+    """Two modes must not share an output path.
+
+    They are not comparable runs, so a later one overwriting an earlier one is
+    silent data loss - and the obvious first workflow is standalone followed by
+    one-way on the same --out.
+
+    The two-way name is fixed by the lab's plotting notebook; one_way_couple_model
+    matches the sibling directory already used there.
+    """
+    import inspect
+
+    src = inspect.getsource(rcf.main)
+    assert "2_way_circle_couple_model_{version}" in src
+    assert "one_way_couple_model_{version}" in src
+    assert "standalone_{version}" in src
+
+    names = {m: n for m, n in (
+        ('two-way', '2_way_circle_couple_model'),
+        ('one-way', 'one_way_couple_model'),
+        ('standalone', 'standalone'))}
+    assert len(set(names.values())) == 3
