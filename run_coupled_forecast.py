@@ -65,6 +65,7 @@ import argparse
 import datetime
 import os
 import sys
+import time
 import warnings
 
 import numpy as np
@@ -73,13 +74,31 @@ import xarray as xr
 
 from DLAMPty_inference import DLAMPty_model
 
-# pysolar re-emits these for every grid point of every step, burying real output
-# in thousands of identical lines. Neither affects the result: the leap-second
-# table stops in 2023 (worth well under a second of solar position), and the
-# timezone notice is about numpy datetimes being naive, which they are by
-# construction here since everything is UTC.
-warnings.filterwarnings("ignore", message=".*leap seconds after.*")
-warnings.filterwarnings("ignore", message=".*no explicit representation of timezones.*")
+# These are re-emitted per grid point per step. Over a 10-day forecast that is
+# thousands of lines and the progress markers are lost in them. Each is checked
+# and harmless:
+#
+#   leap seconds / naive datetimes  pysolar's table stops in 2023, worth well
+#                                   under a second of solar position; the
+#                                   timezone notice is about numpy datetimes
+#                                   being naive, which they are by construction
+#                                   since everything here is UTC.
+#   overflow in exp                 pysolar's optical depth on the night side;
+#                                   the result underflows to zero, which is
+#                                   physically what it should be.
+#   invalid value in log            metpy's dewpoint where vapour pressure is
+#                                   non-positive. Those cells are outside the
+#                                   polar disc and are refilled each step; the
+#                                   guard in predict_one_step would stop us if
+#                                   any reached the sampled region.
+#   torch.cuda.amp deprecation      inside the vendored FCNV2, not ours to fix
+#                                   without forking upstream code further.
+for _msg in (".*leap seconds after.*",
+             ".*no explicit representation of timezones.*",
+             ".*overflow encountered in exp.*",
+             ".*invalid value encountered in.*",
+             ".*torch.cuda.amp.*is deprecated.*"):
+    warnings.filterwarnings("ignore", message=_msg)
 
 # Sub-domain of the global grid that gets saved, as index bounds on the standard
 # 721x1440 (0.25 deg) FCNV2 grid. Western North Pacific: 10S-80N, 80E-180E.
@@ -318,6 +337,7 @@ def main(args):
             if not os.path.exists(p):
                 raise FileNotFoundError(p)
 
+        t_start = time.time()
         base = os.path.join(run_root, f"start_from_{stamp}")
         llat_dir = os.path.join(base, 'DLAMPty', 'forecast')
         os.makedirs(llat_dir, exist_ok=True)
@@ -390,8 +410,12 @@ def main(args):
                 # patch again regardless, since the next step is a model step.
                 up, sfc = fill_remaining_nan(up, sfc, up0, sfc0)
 
-            if i % 4 == 0:
-                print(f"  +{i*6:0>3} h  {target:%Y-%m-%d %H}Z")
+            if i % 4 == 0 or i * 6 == args.hours:
+                lon_c = float(np.nanmean(sfc[..., -2]))
+                lat_c = float(np.nanmean(sfc[..., -1]))
+                print(f"  +{i*6:0>3} h  {target:%Y-%m-%d %H}Z  "
+                      f"centre {lon_c:7.2f}E {lat_c:6.2f}N  "
+                      f"[{time.time() - t_start:5.0f} s]")
 
     print(f"\ndone -> {run_root}")
 
