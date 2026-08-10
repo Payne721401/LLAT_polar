@@ -9,7 +9,9 @@ tracks therefore fall out of data already on disk.
 Reports total error and splits it into along-track and cross-track. That split is
 worth the extra lines: a model that goes the right way too slowly and one that
 goes the wrong way can post the same total error and need completely different
-fixes.
+fixes. Alongside them it draws the tracks themselves, because even the split can
+mislead - a forecast heading somewhere else entirely will cross the observed
+track on its way past and post a small error at that moment.
 
 Usage
 -----
@@ -49,6 +51,19 @@ def km(dlon, dlat, lat):
     return (dlon * DEG_KM * np.cos(np.deg2rad(lat)), dlat * DEG_KM)
 
 
+def draw_track(ax, hours, lons, lats, colour, label, lw=1.6):
+    """One track on the map, marked every 24 h.
+
+    The daily markers are what make lag readable: two tracks can lie on top of
+    each other while the storms sit a day apart along them, and that is exactly
+    the failure mode here.
+    """
+    ax.plot(lons, lats, '-', lw=lw, color=colour, label=label)
+    daily = [i for i, h in enumerate(hours) if h % 24 == 0]
+    ax.plot([lons[i] for i in daily], [lats[i] for i in daily],
+            'o', ms=5, color=colour)
+
+
 def main(args):
     import matplotlib
     matplotlib.use('Agg')
@@ -70,7 +85,16 @@ def main(args):
     if not truth:
         raise SystemExit("no ERA5 file matched any forecast hour")
 
-    fig, ax = plt.subplots(1, 3, figsize=(14, 4.2))
+    # The map earns the space it takes. Error magnitude alone cannot distinguish
+    # a forecast that lags along the right path from one that goes somewhere else
+    # and happens to pass close by, and both occur in the same 240 h run here.
+    # Dots at 24 h follow Fig. 4b of the paper, so the two can be read side by side.
+    fig, axd = plt.subplot_mosaic([['map', 'tot'], ['map', 'along'], ['map', 'cross']],
+                                  figsize=(13.5, 8.0),
+                                  gridspec_kw={'width_ratios': [1.25, 1.0]})
+    amap = axd['map']
+    ax = [axd['tot'], axd['along'], axd['cross']]
+
     print(f"{'run':<14} {'lead':>5} {'error':>9} {'along':>9} {'cross':>9}")
     print("-" * 52)
 
@@ -96,16 +120,29 @@ def main(args):
             print(f"{name:<14} {h:>4}h {tot[-1]:>8.0f} {along[-1]:>+8.0f} "
                   f"{cross[-1]:>+8.0f}  km")
 
-        ax[0].plot(hs, tot, 'o-', lw=1.5, label=name)
-        ax[1].plot(hs, along, 'o-', lw=1.5, label=name)
-        ax[2].plot(hs, cross, 'o-', lw=1.5, label=name)
+        line, = ax[0].plot(hs, tot, 'o-', lw=1.5, label=name)
+        colour = line.get_color()
+        ax[1].plot(hs, along, 'o-', lw=1.5, label=name, color=colour)
+        ax[2].plot(hs, cross, 'o-', lw=1.5, label=name, color=colour)
         ax[0].set_ylim(bottom=0)
 
         lons, lats = zip(*fx)
+        draw_track(amap, hs, lons, lats, colour, name)
         print(f"{'':<14} track {lons[0]:.2f}E,{lats[0]:.2f}N -> "
               f"{lons[-1]:.2f}E,{lats[-1]:.2f}N")
 
-    tl, ta = zip(*[truth[h] for h in sorted(truth)])
+    th = sorted(truth)
+    tl, ta = zip(*[truth[h] for h in th])
+    draw_track(amap, th, tl, ta, 'k', 'ERA5', lw=2.2)
+    amap.plot(tl[0], ta[0], '*', ms=18, color='k', zorder=5)
+    # Longitude spans less ground than latitude away from the equator; without
+    # this the track looks like it turns somewhere it does not.
+    amap.set_aspect(1.0 / np.cos(np.deg2rad(np.mean(ta))))
+    amap.set_title("track — dots every 24 h, star = initial position", fontsize=10)
+    amap.set_xlabel("longitude [°E]")
+    amap.set_ylabel("latitude [°N]")
+    amap.grid(alpha=0.3)
+    amap.legend(fontsize=8)
     print(f"{'ERA5':<14} track {tl[0]:.2f}E,{ta[0]:.2f}N -> "
           f"{tl[-1]:.2f}E,{ta[-1]:.2f}N")
 
