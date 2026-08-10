@@ -71,6 +71,14 @@ def main(args):
 
     init = datetime.datetime.strptime(args.init, "%Y%m%d%H")
     runs = [r.split('=', 1) for r in args.run]
+    # An unset shell variable expands to nothing, so --run "one-way=$O" becomes
+    # --run "one-way=" and every later step quietly finds no files. Saying so
+    # here beats "no ERA5 file matched any forecast hour" ten lines further on.
+    for name, path in runs:
+        if not os.path.isdir(os.path.expanduser(path)):
+            raise SystemExit(f"run {name!r}: no such directory: {path!r}\n"
+                             "(an empty path means the shell variable holding it "
+                             "was not set in this session)")
     leads = pf.available_leads(runs[0][1])
     meta = pf.read_meta(runs[0][1])
 
