@@ -9,30 +9,43 @@ Read the "Invariants" section before changing anything under `DLAMPty_inference.
 
 ---
 
-## Current status — 2026-08-09
+## Current status — 2026-08-11
 
 Keep this block short and current. It is the first thing an agent reads, so it should
 answer "where is this project" in ten lines, not narrate history. Detail belongs in dated
 notes under `analysis/`; what was *done* belongs in the git log.
 
 **Works.** Training (val loss 0.24997, bf16 + LR 5e-5). ONNX export with verification.
-All three forecast modes run end to end — standalone and one-way both completed +24 h on
-202421W — plus the comparison and radial-diagnostic figures.
+All three forecast modes to +240 h — a 10-day one-way forecast takes about a minute, so
+whole-season experiments are cheap. Five diagnostics: comparison figure, radial profile,
+track error with map, steering flow, vortex centre.
 
-**In progress.** Longer forecasts, to see whether the track error growth is linear.
-See `analysis/2026-08-09_first_coupled_forecast.md`: the rim rise turned out to be real
-weather, not an artefact — one-way tracks ERA5 to within 0.12 hPa beyond r = 5 — so the
-radial loss weight is not the priority it looked like. Standalone's seam at r = 8 is real
-and coupling removes it. Track error is ~100 % along-track: the storm goes the right way
-at 62 % of observed speed.
+**The track error is diagnosed.** See `analysis/2026-08-11_track_error_diagnosed.md`.
+`val_RMSE/lon` is 0.774° and `val_RMSE/lat` 0.554°, a **102 km position error for one 3 h
+step** against the 104 km the storm covers in it; as a random walk that is 288 km at 24 h
+and the observed error was 296 km. The model's own steering flow is right (identical at
+hour 0 by construction) but its frame moves at **55–72 %** of what that flow implies, and
+the vortex does not drift to compensate (median 30 km from the array centre over 240 h).
+The two channels that carry the whole track are **0.43 %** of the objective.
 
 **Blocked on nothing.**
 
-**Next, in order.** (1) the speed bias — the frame's motion is 0.078 sigma per step and
-under 0.4 % of the surface loss, so the objective barely constrains it; weight the
-coordinate channels, or predict displacement. (2) P1, the patch/window redesign — now with
-direct evidence, the forecast inner core is 30 % more asymmetric than truth at r = 1.9,
-which is exactly where a 2°-wide radial patch would hurt.
+**Next, in order.** (1) `--frame-speed-scale ≈ 1.45` at inference — no retraining, measures
+how much of the error is pure speed calibration. (2) persistence baseline, without which
+"102 km per step" cannot be called worse than doing nothing. (3) `residual: true`, masked
+to lon/lat, and `surface_var_weights` — both need a retrain. (4) P1, which is now about
+structure and intensity, not track.
+
+**Dead hypotheses, do not revisit without new evidence.** The lateral boundary (one-way and
+standalone agree to +96 h). The environment representation, i.e. P1 as a *track* problem
+(the steering flow is right). Vortex drift (there is none). The outer-ring artefact (truth
+shows the same rise). Best-track provenance (inference is JMA, training was JTWC per the
+paper, but vortex-to-vortex agrees with frame-to-frame, bounding it at ~30 km).
+
+**202421W at 2024-10-25 00Z is a 35 kt, 998 hPa storm.** `wind_min` and `vort850` both
+mislocate it at hour 0, on an ERA5 analysis. Use `mslp`. The paper's Fig. 4b uses the same
+storm 12 h later, so it is not a like-for-like comparison, and the paper reports ~30 %
+larger track errors for weak samples.
 
 **Recently learned, worth not relearning.** NaN outside the polar disc is not inert: the
 rim of `latlon_to_polar` interpolates bilinearly and reaches across it, so 23.4 % NaN
