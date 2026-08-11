@@ -37,3 +37,15 @@ analysis/run_mine_per_layer.csv
 # 叢集 job log(scp 下來檢查用,非分析產物)
 analysis/job-*.out
 analysis/job-*.err
+
+# Build outputs from analysis/*.md — regenerate rather than track. The PDF alone
+# is 3.7 MB and changes wholesale on every export, so it dominates the history of
+# a repository whose text is a few hundred KB.
+analysis/*.pdf
+analysis/*.html
+
+# Diagnostic figures from forecast runs. A whole-season sweep is ~30 storms x a
+# few initial times x five plots, and they are reproducible from the .npy in one
+# command. Training-analysis figures under analysis/figures/training/ ARE tracked:
+# those come from runs that will not happen again.
+analysis/figures/forecasts/

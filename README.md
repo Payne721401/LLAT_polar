@@ -319,6 +319,56 @@ would otherwise shift every field by one with nothing looking wrong.
 
 ---
 
+## Where the figures go
+
+Every tool creates the parent of `--out`, so the path alone does the filing:
+
+```
+analysis/figures/
+├── training/                        tracked — those runs will not happen again
+│   └── fig01_loss_curves.png ...
+└── forecasts/                       gitignored — reproducible in one command
+    └── {TC_ID}/{YYYYMMDDHH}/
+        ├── track.png                tools/track_error.py
+        ├── intensity.png            tools/intensity.py
+        ├── steering.png             tools/steering.py
+        ├── centre.png               tools/find_center.py
+        └── compare_024h.png         tools/plot_forecast.py
+```
+
+```bash
+FIG=analysis/figures/forecasts/202421W/2024102700
+python tools/track_error.py --run "1.0=$RUN" --era5 $ERA5     --tc-id 202421W --init 2024102700 --out $FIG/track.png
+```
+
+A whole-season sweep produces several hundred of these and every one of them can
+be redrawn from the saved `.npy`, so `forecasts/` is gitignored while `training/`
+is not.
+
+---
+
+## How many forecasts to run at once
+
+The limit is GPU memory, not cores. FCNV2 holds a 3.3 GB checkpoint per process
+on a 10 GB card, so **one-way runs fit two at a time**; standalone touches no GPU
+at all and is bounded only by cores. Measure rather than guess:
+
+```bash
+( while sleep 2; do
+    nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits
+  done ) > /tmp/gpu.log &
+MON=$!
+python run_coupled_forecast.py $COMMON --start 2024102500
+kill $MON
+sort -n /tmp/gpu.log | tail -1        # peak MB for one process
+```
+
+Then `floor((total - 1000) / peak)`, keeping about a gigabyte back for the
+display and for fragmentation. Exceeding it does not degrade gracefully — the
+run dies partway through with a CUDA out-of-memory error.
+
+---
+
 ## Data
 
 ```
