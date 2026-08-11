@@ -221,3 +221,35 @@ def test_search_radius_excludes_a_stronger_system_further_out():
     lon, lat = fc.locate(f, 'mslp', search_deg=5.0)
     assert lon == pytest.approx(LON0, abs=0.2)
     assert lat == pytest.approx(LAT0, abs=0.2)
+
+
+# --------------------------------------------------------------------------
+# intensity.py - measure the storm, not the trough at the edge of the domain
+# --------------------------------------------------------------------------
+
+inten = _load("intensity")
+
+
+def test_intensity_reads_the_planted_vortex():
+    f = make_field(vmax=40.0)
+    p, w = inten.measure(f, search_deg=5.0)
+    assert p == pytest.approx((101_000.0 - 5_000.0) / 100.0, abs=1.0)
+    assert w == pytest.approx(0.8 * 40.0, rel=0.05)
+
+
+def test_intensity_ignores_a_deeper_low_outside_the_search_radius():
+    """Negative control, and the reason the radius exists.
+
+    A mid-latitude trough at the edge of a 20 degree square is ordinary, and it
+    is routinely deeper than a developing TC. Reported as the storm it would show
+    as a sudden intensification that never happened.
+    """
+    f = make_field(vmax=40.0)
+    msl = f.sfc[..., pf.SFC.index('msl')]
+    r = np.hypot((f.lon - LON0) * np.cos(np.deg2rad(LAT0)), f.lat - LAT0)
+    msl[r > 7.0] -= 9_000.0
+
+    near, _ = inten.measure(f, search_deg=5.0)
+    far, _ = inten.measure(f, search_deg=10.0)
+    assert near == pytest.approx(960.0, abs=1.0)
+    assert far < 930.0                       # the trough, not the storm

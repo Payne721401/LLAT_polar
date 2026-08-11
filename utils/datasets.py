@@ -142,9 +142,22 @@ class ERA5TCDataset(torch.utils.data.Dataset):
         trimed_var = input_var[:]
         x = input_var.shape[-1]
         y = input_var.shape[-2]
-        if x != int(self.r_degree_max*2/self.original_resolution)+1 or y != int(self.r_degree_max*2/self.original_resolution)+1:
-            xd = int((x - int(self.r_degree_max*2/self.original_resolution)+1) / 2)
-            yd = int((y - int(self.r_degree_max*2/self.original_resolution)+1) / 2)
+        # B5. This read `int((x - int(2*r/res) + 1) / 2)`. The +1 was meant to
+        # complete the target width, but it sits outside the inner int() and so
+        # lands in the subtraction: (x - 80 + 1)/2 instead of (x - 81)/2. A
+        # 161-wide source was then cropped by 41 a side to 79 rather than by 40
+        # to 81 - two cells small, still centred, so nothing looks wrong until a
+        # shape assertion fires somewhere else entirely. It only triggers when
+        # the source is not already the target size, which is why it survived.
+        # self.cartesian_n is the same quantity, derived once at construction.
+        n = self.cartesian_n
+        if x != n or y != n:
+            if (x - n) % 2 or (y - n) % 2:
+                raise ValueError(
+                    f"cannot centre-crop {y}x{x} to {n}x{n}: the margin is odd, "
+                    "so the TC would no longer sit at the array centre")
+            xd = (x - n) // 2
+            yd = (y - n) // 2
             trimed_var = input_var[:][..., yd : y - yd, xd : x - xd]
         return trimed_var
     
