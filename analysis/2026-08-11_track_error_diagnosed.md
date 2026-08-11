@@ -174,6 +174,51 @@ a factor near 1.45. Rescaling the per-step frame displacement measures how much 
 the track error is pure speed calibration. It is a fitted constant on one case,
 not a fix, but at a minute per forecast it is close to free.
 
+## The rescaling test, run
+
+`--frame-speed-scale` on 1.0 / 1.2 / 1.45 / 1.7, one-way, +192 h.
+
+| lead | 1.0 | 1.2 | 1.45 | 1.7 |
+|---|---|---|---|---|
+| 6 h | 104 | 83 | 59 | **45** |
+| 18 h | 164 | 78 | **26** | 127 |
+| 24 h | 296 | 196 | **99** | 113 |
+| 48 h | 359 | **256** | 289 | 426 |
+| 72 h | 322 | 150 | **92** | 250 |
+| 120 h | 645 | 507 | 319 | **228** |
+| 156 h | 1048 | 914 | 677 | **590** |
+| 192 h | 415 | 412 | 379 | **239** |
+
+**1.45 beats 1.0 at all 32 leads, and so does 1.2.** The under-speed is real,
+systematic and correctable, and at 24 h a single scalar removes two thirds of the
+error. Short range is transformed: 6 h goes from 104 km to 45, 18 h from 164 to
+26.
+
+Three qualifications, all of them informative.
+
+**There is no single best scale.** 1.45 wins from 12 to 30 h and at 72 h, 1.2 from
+36 to 48 h, 1.7 from 96 h on. A constant factor is the wrong shape for the error.
+
+**The deficit grows with lead.** At 156 h even 1.7 still leaves −590 km
+along-track. Extrapolating the 1.45 → 1.7 gain, closing it would need a factor
+near 3.5, which is not a speed correction but a different failure: the storm
+accelerates from about 2 m/s to 12 m/s through the recurvature and the model does
+not follow the acceleration. Mean speed and its variation are separate errors.
+
+**Rescaling makes cross-track worse where it is already worst.** In the 36–60 h
+window cross-track goes from −232 km at 1.0 to −314 km at 1.7: pushing a storm
+faster along a heading that is slightly wrong takes it further off the line. The
+direction is good, not perfect.
+
+Backing the per-step centre error out of these numbers, using linear accumulation
+for the systematic part and √N for the random: 99 km at 24 h with the systematic
+part removed gives 35 km per step of random error, and 296 km uncorrected gives
+35 km per step of systematic. Together **49 km per step**, against persistence's
+68. So the model does beat persistence at a single step; `val_RMSE`'s 102 km is a
+field RMSE and about half of it is spatial noise that never reaches the centre.
+The 35 km systematic is 34 % of the 104 km the storm travels per step, and
+1 − 1/1.45 = 31 %, so the two routes to the same quantity agree.
+
 ## Limits
 
 One storm, one initial time, and a weak one. The persistence baseline — the RMS

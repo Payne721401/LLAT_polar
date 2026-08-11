@@ -30,11 +30,20 @@ The two channels that carry the whole track are **0.43 %** of the objective.
 
 **Blocked on nothing.**
 
-**Next, in order.** (1) `--frame-speed-scale ≈ 1.45` at inference — no retraining, measures
-how much of the error is pure speed calibration. (2) persistence baseline, without which
-"102 km per step" cannot be called worse than doing nothing. (3) `residual: true`, masked
-to lon/lat, and `surface_var_weights` — both need a retrain. (4) P1, which is now about
-structure and intensity, not track.
+**Rescaling works, and shows its own limits.** `--frame-speed-scale 1.45` beats 1.0 at all
+32 leads — 24 h goes 296 → 99 km, 6 h goes 104 → 45. But no single factor is best
+everywhere (1.2 at 36–48 h, 1.7 beyond 96 h), the deficit grows with lead because the model
+does not follow the storm's acceleration through recurvature, and rescaling makes
+cross-track worse where it is already worst. Backed out of those numbers the per-step centre
+error is **49 km** — 35 systematic, 35 random — against persistence's 68, so the model does
+beat persistence; `val_RMSE`'s 102 km is a field RMSE and half of it never reaches the
+centre.
+
+**Next, in order.** (1) the same sweep from a stronger initial time (`--start 2024102512`,
+`2024102700`) — is 1.45 a property of the model or of a 35 kt vortex? (2) `residual: true`
+masked to lon/lat, and `surface_var_weights`; with a residual connection persistence becomes
+the model's floor, which it currently is not. (3) P1, which is now about structure and
+intensity, not track.
 
 **Dead hypotheses, do not revisit without new evidence.** The lateral boundary (one-way and
 standalone agree to +96 h). The environment representation, i.e. P1 as a *track* problem
