@@ -540,6 +540,16 @@ if __name__ == "__main__":
     p.add_argument("--max-starts", type=int, default=0,
                    help="0 = every initial time; use 1 for a smoke test")
     a = p.parse_args()
+    # A tilde only expands when the shell sees it unquoted. Collecting the flags
+    # into a variable - COMMON="--out ~/runs ..." - hides it from the shell, and
+    # what arrives here is a literal "~" that os.makedirs happily creates as a
+    # directory of that name in the working directory. The run succeeds and the
+    # output is not where the log says it is.
+    for _f in ('out', 'data_root', 'track_csv', 'fcnv2_weight', 'model_yaml',
+               'coupling_root'):
+        _v = getattr(a, _f, None)
+        if _v:
+            setattr(a, _f, os.path.expanduser(_v))
     if a.mode != 'standalone' and not a.fcnv2_weight:
         p.error(f"--mode {a.mode} needs --fcnv2-weight (or use --mode standalone)")
     main(a)

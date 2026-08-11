@@ -83,6 +83,7 @@ def report(label, d, per_step):
 
 
 def main(args):
+    args.track_csv = os.path.expanduser(args.track_csv)
     files = sorted(glob.glob(os.path.join(args.track_csv, "*.csv")))
     if not files:
         raise SystemExit(f"no {args.track_csv}/*.csv")
@@ -114,8 +115,29 @@ def main(args):
     print(f"persistence, same units:              "
           f"lon {lon_b:5.3f}deg   lat {lat_b:5.3f}deg   total {total_b:6.1f} km")
     skill = 1.0 - model_km / total_b
-    print(f"\nskill against persistence: {100*skill:+.0f} %"
-          f"   ({'the model beats it' if skill > 0 else 'DOING NOTHING SCORES BETTER'})")
+    verdict = "the model beats it" if skill > 0 else "persistence scores better"
+    print(f"\nupper bound on the model's skill at one step: {100*skill:+.0f} % "
+          f"({verdict})")
+
+    print("""
+Read that number carefully - it is an upper bound on the error, so a lower bound
+on the skill, and it says less than it looks like it does.
+
+  * val_RMSE is the RMSE of the coordinate FIELD. Persistence gets the whole ramp
+    wrong by one displacement, uniformly, so for it field error and centre error
+    are the same number. The model's need not be: noise about a correct mean
+    inflates its field RMSE without moving its centre at all, and the centre is
+    the only thing the track depends on. Compare the two by rerunning a forecast
+    with --frame-speed-scale: whatever error survives a corrected speed is the
+    part that actually moved the storm.
+
+  * one step is not a forecast. Persistence errors accumulate coherently - the
+    storm keeps travelling away - while a model that moves, even too slowly,
+    accumulates a fraction of that. Losing at one step and winning by an order of
+    magnitude at 24 h are perfectly consistent, and both are worth knowing: the
+    single-step number says how much of the motion the objective taught, and the
+    24 h number says whether the forecast is usable.""")
+
     print("\ncaveats: these are the years in this CSV directory, not the "
           "validation years;\n  and the model was trained on JTWC-centred "
           "domains while this is JMA.\n  Translation speed statistics are stable "

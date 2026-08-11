@@ -141,7 +141,10 @@ def main(args):
     import matplotlib.pyplot as plt
 
     init = datetime.datetime.strptime(args.init, "%Y%m%d%H")
-    runs = [r.split('=', 1) for r in args.run]
+    runs = [(n, os.path.expanduser(q))
+            for n, q in (r.split('=', 1) for r in args.run)]
+    if args.era5:
+        args.era5 = os.path.expanduser(args.era5)
     for name, path in runs:
         if not os.path.isdir(os.path.expanduser(path)):
             raise SystemExit(f"run {name!r}: no such directory: {path!r}\n"

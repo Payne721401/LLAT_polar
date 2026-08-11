@@ -70,7 +70,9 @@ def main(args):
     import matplotlib.pyplot as plt
 
     init = datetime.datetime.strptime(args.init, "%Y%m%d%H")
-    runs = [r.split('=', 1) for r in args.run]
+    runs = [(n, os.path.expanduser(q))
+            for n, q in (r.split('=', 1) for r in args.run)]
+    args.era5 = os.path.expanduser(args.era5)
     # An unset shell variable expands to nothing, so --run "one-way=$O" becomes
     # --run "one-way=" and every later step quietly finds no files. Saying so
     # here beats "no ERA5 file matched any forecast hour" ten lines further on.
