@@ -172,7 +172,7 @@ def hold_boundary(up, sfc, up0, sfc0, mask, n_coord=2):
     return up, sfc
 
 
-def fill_remaining_nan(up, sfc, up0, sfc0):
+def fill_remaining_nan(up, sfc, up0, sfc0, n_coord=2):
     """Patch any NaN left in the state from the initial condition.
 
     Every step, polar_to_latlon leaves the corners outside the disc NaN - 23.4 %
@@ -194,14 +194,69 @@ def fill_remaining_nan(up, sfc, up0, sfc0):
     The initial condition is stale by then, but these are cells outside the
     model's own domain that matter only through rim interpolation, so a stale
     finite value beats a NaN.
+
+    That argument holds for weather and fails for lon/lat, so the last `n_coord`
+    channels are excluded here and rebuilt instead. They are not weather, they
+    are the moving frame. Pasting the initial grid into the corners would leave
+    23.4 % of the coordinate field saying where the storm was at t=0 and 76.6 %
+    saying where it is now, and the next step recovers the centre by averaging
+    that mixture - so the frame is dragged back towards the origin every step.
+
+    This is the same defect that froze lon/lat in hold_boundary and made the
+    storm travel at 49 % of its intended speed. That one was found; this one was
+    not, because holding the boundary stops the storm visibly while refilling
+    corners merely slows it, and a forecast that still moves does not look broken.
     """
-    m = np.isnan(sfc)
+    m = np.isnan(sfc[..., :-n_coord])
     if m.any():
-        sfc[m] = sfc0[m]
+        sfc[..., :-n_coord][m] = sfc0[..., :-n_coord][m]
     m = np.isnan(up)
     if m.any():
         up[m] = up0[m]
+    rebuild_coordinate_ramps(sfc, n_coord)
     return up, sfc
+
+
+def rebuild_coordinate_ramps(sfc, n_coord=2):
+    """Extend the lon/lat ramps across the corners, in place.
+
+    predict_one_step writes a uniform grid, so longitude depends only on the
+    column and latitude only on the row. Every column crosses the disc somewhere,
+    so each one has at least one finite cell to read its value from, and the
+    corners can be filled exactly rather than approximately. The result carries
+    one centre, not a blend of two.
+    """
+    if n_coord < 2:
+        return sfc
+    lon, lat = sfc[..., -2], sfc[..., -1]
+    if np.isnan(lon).any():
+        col = np.nanmean(lon, axis=0)                  # one value per column
+        lon[...] = np.broadcast_to(col, lon.shape)
+    if np.isnan(lat).any():
+        row = np.nanmean(lat, axis=1)                  # one value per row
+        lat[...] = np.broadcast_to(row[:, None], lat.shape)
+    return sfc
+
+
+def rescale_frame_step(sfc_before, sfc_after, scale):
+    """Multiply the frame displacement the model just predicted, in place.
+
+    Not a fix - a measurement. The forecast direction is right (cross-track error
+    stayed under 250 km for 192 h) and only the speed is wrong, by a factor near
+    1.45; the model's own deep-layer steering flow says so and so does the
+    single-step coordinate RMSE. Rescaling asks how much of the track error is
+    that one number, and the answer costs a minute per forecast instead of a
+    training run.
+
+    Only the coordinate channels move. That is not an approximation: the
+    autoregressive loop never resamples the weather array between steps, it
+    relabels it, so the declared position is the whole of the track.
+    """
+    for k in (-2, -1):
+        before = float(np.nanmean(sfc_before[..., k]))
+        after = float(np.nanmean(sfc_after[..., k]))
+        sfc_after[..., k] += (scale - 1.0) * (after - before)
+    return sfc_after
 
 
 def write_run_meta(path, llat, args, init):
@@ -308,7 +363,19 @@ def main(args):
     track['datetime'] = pd.to_datetime(track[['Year', 'Month', 'Day', 'Hour']])
 
     starts = track['datetime'].tolist()
-    if args.max_starts:
+    if args.start:
+        # Naming the time beats counting rows. Which initial time you pick is not
+        # a detail: 202421W at 2024-10-25 00Z is a 35 kt, 998 hPa storm, and the
+        # paper reports track errors about 30 % larger for samples that weak
+        # because the vortex is poorly defined.
+        want = datetime.datetime.strptime(args.start, "%Y%m%d%H")
+        if want not in starts:
+            raise SystemExit(
+                f"--start {args.start} is not an available initial time for "
+                f"{args.tc_id}. Available: "
+                + ", ".join(t.strftime('%Y%m%d%H') for t in starts))
+        starts = [want]
+    elif args.max_starts:
         starts = starts[args.start_index:args.start_index + args.max_starts]
     print(f"initial times : {len(starts)} ({starts[0]} .. {starts[-1]})")
 
@@ -321,6 +388,10 @@ def main(args):
         'one-way': f"one_way_couple_model_{version}",
         'standalone': f"standalone_{version}",
     }[args.mode])
+    # Same reasoning as the mode: a rescaled run is not comparable to an
+    # unscaled one, so it must not land on top of it.
+    if args.frame_speed_scale != 1.0:
+        run_root += f"_scale{args.frame_speed_scale:g}"
 
     for initial_time in starts:
         stamp = initial_time.strftime('%Y%m%d%H')
@@ -373,7 +444,11 @@ def main(args):
                 # and "first step" versus "after the first exchange" points at
                 # completely different causes.
                 try:
+                    sfc_before = sfc
                     up, sfc = llat.predict_one_step(up, sfc)
+                    if args.frame_speed_scale != 1.0:
+                        sfc = rescale_frame_step(sfc_before, sfc,
+                                                 args.frame_speed_scale)
                     np.save(os.path.join(llat_dir, f"output_upper_{hh:0>3}h"), up)
                     np.save(os.path.join(llat_dir, f"output_sfc_{hh:0>3}h"), sfc)
                     up, sfc = llat.changing_additional_information(up, sfc, target)
@@ -449,6 +524,18 @@ if __name__ == "__main__":
                         "the polar disc, which have no model output at all")
     p.add_argument("--fcnv2-device", default="cuda")
     p.add_argument("--llat-device", default="cpu")
+    p.add_argument("--start", default=None, metavar="YYYYMMDDHH",
+                   help="one initial time by name, instead of counting rows with "
+                        "--start-index. Which one matters: 202421W at "
+                        "2024102500 is a 35 kt, 998 hPa storm, and the paper "
+                        "reports ~30 %% larger track errors for samples that weak")
+    p.add_argument("--frame-speed-scale", type=float, default=1.0,
+                   help="multiply the frame displacement predicted at each step. "
+                        "The model's own steering flow and its single-step "
+                        "coordinate RMSE both put the frame at about 70 %% of the "
+                        "right speed, so ~1.45 asks how much of the track error "
+                        "is one scalar. Writes to its own directory. A "
+                        "measurement, not a fix")
     p.add_argument("--start-index", type=int, default=0)
     p.add_argument("--max-starts", type=int, default=0,
                    help="0 = every initial time; use 1 for a smoke test")

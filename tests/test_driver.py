@@ -268,3 +268,86 @@ def test_fill_remaining_nan_makes_the_state_safe_to_step():
 
     p, _, _ = latlon_to_polar(sfc, R=41, Theta=180, r_max=40.0, center_xy=(40.0, 40.0))
     assert not np.isnan(p).any(), "the rim still pulls NaN in"
+
+
+def _ramps(n, lon0, lat0, res=0.25):
+    """A uniform coordinate grid, as predict_one_step writes it."""
+    return np.meshgrid(lon0 + (np.arange(n) - (n - 1) / 2) * res,
+                       lat0 - (np.arange(n) - (n - 1) / 2) * res)
+
+
+def test_fill_remaining_nan_keeps_one_centre_in_the_coordinate_channels():
+    """The corners must be extended, not pasted from the initial condition.
+
+    Weather outside the disc can be stale - it only matters through rim
+    interpolation. lon/lat cannot: they are the frame, and mixing 23.4 % of the
+    t=0 grid into 76.6 % of the current one leaves a field with two centres,
+    whose mean is neither.
+    """
+    n = 81
+    yy, xx = np.meshgrid(np.arange(n) - 40.0, np.arange(n) - 40.0, indexing="ij")
+    outside = np.hypot(xx, yy) > 40.0
+
+    sfc0 = np.zeros((n, n, 20))
+    sfc0[..., -2], sfc0[..., -1] = _ramps(n, 130.0, 15.0)
+    sfc = np.ones((n, n, 20))
+    sfc[..., -2], sfc[..., -1] = _ramps(n, 132.0, 15.0)      # moved 2 deg east
+    sfc[outside, :] = np.nan
+
+    up = np.ones((13, n, n, 6))
+    up[:, outside, :] = np.nan
+    up, sfc = rcf.fill_remaining_nan(up, sfc, np.zeros_like(up), sfc0)
+
+    assert not np.isnan(sfc).any()
+    assert np.mean(sfc[..., -2]) == pytest.approx(132.0, abs=1e-9)
+    assert np.mean(sfc[..., -1]) == pytest.approx(15.0, abs=1e-9)
+    # Weather corners still come from the initial condition, as intended.
+    np.testing.assert_array_equal(sfc[outside, 0], 0.0)
+
+
+def test_pasting_the_ic_into_the_coordinate_corners_drags_the_frame_back():
+    """Negative control, and the size of the defect it guards against.
+
+    This is what fill_remaining_nan used to do. Unlike the hold_boundary version
+    it does not stop the storm, it slows it to the disc's own area fraction -
+    every step, and towards the origin rather than the previous position. A
+    forecast that still moves does not look broken.
+    """
+    n = 81
+    yy, xx = np.meshgrid(np.arange(n) - 40.0, np.arange(n) - 40.0, indexing="ij")
+    outside = np.hypot(xx, yy) > 40.0
+
+    lon_ic, _ = _ramps(n, 130.0, 15.0)
+    lon_new, _ = _ramps(n, 132.0, 15.0)
+    mixed = lon_new.copy()
+    mixed[outside] = lon_ic[outside]                         # the old behaviour
+
+    delivered = (np.mean(mixed) - 130.0) / 2.0
+    assert delivered == pytest.approx(1.0 - outside.mean(), abs=0.01)
+    assert 0.74 < delivered < 0.79, delivered                # 76.6 % of the step
+
+
+def test_frame_speed_scale_multiplies_the_step_and_nothing_else():
+    n = 81
+    before = np.zeros((n, n, 20))
+    before[..., -2], before[..., -1] = _ramps(n, 130.0, 15.0)
+    after = np.full((n, n, 20), 7.0)
+    after[..., -2], after[..., -1] = _ramps(n, 130.5, 15.2)   # the model's step
+
+    scaled = rcf.rescale_frame_step(before, after.copy(), 1.45)
+    assert np.mean(scaled[..., -2]) == pytest.approx(130.0 + 1.45 * 0.5, abs=1e-9)
+    assert np.mean(scaled[..., -1]) == pytest.approx(15.0 + 1.45 * 0.2, abs=1e-9)
+    # Still a uniform grid, just shifted: the spacing is untouched.
+    assert scaled[0, 1, -2] - scaled[0, 0, -2] == pytest.approx(0.25, abs=1e-9)
+    np.testing.assert_array_equal(scaled[..., :-2], 7.0)
+
+
+def test_frame_speed_scale_of_one_changes_nothing():
+    """The default must be exactly inert, or every unscaled run shifts."""
+    n = 81
+    before = np.zeros((n, n, 20))
+    before[..., -2], before[..., -1] = _ramps(n, 130.0, 15.0)
+    after = np.zeros((n, n, 20))
+    after[..., -2], after[..., -1] = _ramps(n, 130.5, 15.2)
+    np.testing.assert_allclose(rcf.rescale_frame_step(before, after.copy(), 1.0),
+                               after, atol=0, rtol=0)
