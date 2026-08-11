@@ -41,7 +41,8 @@ standalone agree to +96 h). The environment representation, i.e. P1 as a *track*
 (the steering flow is right). Vortex drift (there is none). The outer-ring artefact (truth
 shows the same rise). Best-track provenance (inference is JMA, training was JTWC per the
 paper and confirmed by the 170 kt training filenames, but vortex-to-vortex agrees with
-frame-to-frame, bounding it at ~30 km).
+frame-to-frame, bounding it at ~30 km). B8, the driver's coordinate-corner patch: measured
+latent, lon channel NaN is 0.00 % because uniformize_lonlat rebuilds both ramps.
 
 **202421W at 2024-10-25 00Z is a 35 kt, 998 hPa storm.** `wind_min` and `vort850` both
 mislocate it at hour 0, on an ERA5 analysis. Use `mslp`. The paper's Fig. 4b uses the same

@@ -113,6 +113,33 @@ frame-to-frame everywhere, so the ERA5 centres sit within about 30 km of their o
 pressure minimum. Against errors of 300–2500 km this does not matter. It would
 matter when comparing two models that differ by tens of km.
 
+## A driver defect that turned out to be latent
+
+While adding the rescaling flag, `fill_remaining_nan` was found to patch every NaN
+in the surface state from the initial condition — including the last two channels,
+which are the frame rather than weather. Had it fired it would have left 23.4 % of
+the coordinate field describing t=0 and 76.6 % describing the present, and the
+storm would have advanced at the disc's own area fraction each step: the same
+defect as the `hold_boundary` one that gave 49 %.
+
+It never fired. Measured on the saved state:
+
+```
+lon channel NaN   0.00 %        u10 channel NaN  23.41 %
+```
+
+`uniformize_lonlat` is True, so `lonlat_uniformizer` rebuilds both coordinate
+ramps with `np.linspace` and leaves no NaN to patch, while the weather channels
+carry the disc corners exactly as designed (23.39 % expected from
+1 − π·40²/81²). The dynamics said the same thing beforehand: at 76.6 % per step
+the recursion settles at 3.3 steps' displacement from the origin and the storm
+stops, and this one travelled 13.5° of longitude.
+
+So the fix is defensive — `data_processor.py` has a second entry point defaulting
+to `uniformize_lonlat=False`, where it would fire silently — and **none** of the
+55–72 % speed deficit is attributable to it. Runs at `--frame-speed-scale 1.0` are
+unchanged, so the existing baselines stand.
+
 ## What this case is not
 
 The initialisation is a **35 kt, 998 hPa tropical storm**. The paper's Fig. 4b
