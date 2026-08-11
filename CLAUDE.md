@@ -40,7 +40,8 @@ structure and intensity, not track.
 standalone agree to +96 h). The environment representation, i.e. P1 as a *track* problem
 (the steering flow is right). Vortex drift (there is none). The outer-ring artefact (truth
 shows the same rise). Best-track provenance (inference is JMA, training was JTWC per the
-paper, but vortex-to-vortex agrees with frame-to-frame, bounding it at ~30 km).
+paper and confirmed by the 170 kt training filenames, but vortex-to-vortex agrees with
+frame-to-frame, bounding it at ~30 km).
 
 **202421W at 2024-10-25 00Z is a 35 kt, 998 hPa storm.** `wind_min` and `vort850` both
 mislocate it at hour 0, on an ERA5 analysis. Use `mslp`. The paper's Fig. 4b uses the same
@@ -233,5 +234,18 @@ the **external** names — see invariant 2.
 | FCNV2 weights | `/wk2/yungyun/code_space/FCNV2_test/weight` (lab host) |
 | Forecast IC | `/wk2/yungyun/FCNV2_TC/{TC_ID}/ERA5/for_{FCNV2,DLAMPty}` (lab host) |
 | Best-track CSV | `/wk2/yungyun/ERA5_2024_for_TC/TC_list_JMA_v2` (lab host) |
+| Forecast output | `~/LLAT_polar_runs/{TC_ID}/{mode}_{version}/start_from_{stamp}` (lab host) |
+
+Note which machine. Training is on NCHC, inference and every forecast directory is on the
+lab host; a path that exists in one place does not exist in the other, and the failure is a
+`FileNotFoundError` that looks like a missing run rather than a missing machine.
+
+**The two best-track sources differ, and both are confirmed.** Training was centred on
+**JTWC** — the intensities in the training filenames reach 170 kt in 2013, and JTWC's
+1-minute sustained scale is the only one that reaches there (JMA's 10-minute scale put the
+same storm at 125 kt). Inference uses **JMA**, verified by arithmetic: JMA has 202421W at
+14.4 N on 2024-10-25 00Z, and `np.int_((90-14.4)/0.25)` snaps that to the 14.5 N the ERA5
+file carries. The mismatch is real and bounded at ~30 km by the vortex-to-vortex agreement,
+so it is a documentation item, not a research one.
 
 `onnx/*.onnx` is gitignored (~106 MB) and must be copied separately.
