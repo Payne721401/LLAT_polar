@@ -113,7 +113,7 @@ frame-to-frame everywhere, so the ERA5 centres sit within about 30 km of their o
 pressure minimum. Against errors of 300–2500 km this does not matter. It would
 matter when comparing two models that differ by tens of km.
 
-## A driver defect that turned out to be latent
+## B9 — a driver defect that turned out to be latent
 
 While adding the rescaling flag, `fill_remaining_nan` was found to patch every NaN
 in the surface state from the initial condition — including the last two channels,
