@@ -96,6 +96,33 @@ best val loss 0.24997.
 
 ---
 
+## The dataset, counted
+
+`end_year` is exclusive in `datasets.py`, so the config's apparent 2018 overlap is not one.
+A sample is one 3-hourly **pair**, not one storm: samples = files − cases.
+
+| | years | cases | files | samples |
+|---|---|---|---|---|
+| train | 2007–2017 | 302 | 14,824 | **14,522** |
+| val | 2018–2019 | 66 | 3,958 | 3,892 |
+| test | 2020 | 26 | 1,202 | 1,176 |
+
+**`batch_size: 4` is per GPU.** On 8 H200s the effective batch is 32, so an epoch is
+14,522/32 = 454 steps — the log measures 455 — and the 105,000-step run is **231 epochs**,
+not the 30 a single-GPU reading would suggest.
+
+231 passes over 14.5k samples with **24.6 M parameters** leaves a **15.2 %** train/val gap
+(0.21697 against 0.25000 at the selected step). For scale, GraphCast and FourCastNet train
+on roughly 55,000 samples. **This model is data-limited, not capacity-limited**, which
+matters for P1: more inner-core resolution can as easily buy more memorisation. Judge any
+retrain against a whole-season baseline, never one case.
+
+The 2024 files under `/wk2/yungyun/FCNV2_TC/` on the lab host are **not** part of any of
+this. They are cut for inference by `download_ERA5_from_google_according_BT.py`, and 2024 is
+outside train, val and test alike — which makes it a clean evaluation year.
+
+---
+
 ## Environments
 
 Three, and they are not interchangeable.

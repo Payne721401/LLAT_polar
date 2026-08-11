@@ -64,6 +64,18 @@ def draw_track(ax, hours, lons, lats, colour, label, lw=1.6):
             'o', ms=5, color=colour)
 
 
+def _prepare(out):
+    """Make the parent directory of an output path, so --out can organise.
+
+    Figures belong under analysis/figures/, filed by case and initial time, and
+    requiring the directory to exist first turns every plotting command into two.
+    """
+    parent = os.path.dirname(os.path.abspath(out))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    return out
+
+
 def main(args):
     import matplotlib
     matplotlib.use('Agg')
@@ -166,7 +178,7 @@ def main(args):
         a.legend(fontsize=8)
     fig.suptitle(f"{args.tc_id}  init {init:%Y-%m-%d %H}Z", fontsize=12)
     fig.tight_layout()
-    fig.savefig(args.out, dpi=args.dpi, bbox_inches='tight', facecolor='white')
+    fig.savefig(_prepare(args.out), dpi=args.dpi, bbox_inches='tight', facecolor='white')
     print(f"\nwrote {args.out}")
 
 

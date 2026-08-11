@@ -276,6 +276,18 @@ def draw(fig, ax, field, panel, radius, vlim, first_col, quiver_scale):
     return mesh
 
 
+def _prepare(out):
+    """Make the parent directory of an output path, so --out can organise.
+
+    Figures belong under analysis/figures/, filed by case and initial time, and
+    requiring the directory to exist first turns every plotting command into two.
+    """
+    parent = os.path.dirname(os.path.abspath(out))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    return out
+
+
 def main(args):
     import matplotlib
     matplotlib.use('Agg')
@@ -335,7 +347,7 @@ def main(args):
 
     fig.suptitle(f"{args.tc_id}  init {init:%Y-%m-%d %H}Z  "
                  f"+{args.lead:03d} h  valid {valid:%Y-%m-%d %H}Z", fontsize=12)
-    fig.savefig(args.out, dpi=args.dpi, bbox_inches='tight', facecolor='white')
+    fig.savefig(_prepare(args.out), dpi=args.dpi, bbox_inches='tight', facecolor='white')
     print(f"wrote {args.out}  ({nrow} rows x {ncol} columns)")
 
 
