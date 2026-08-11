@@ -253,3 +253,46 @@ def test_intensity_ignores_a_deeper_low_outside_the_search_radius():
     far, _ = inten.measure(f, search_deg=10.0)
     assert near == pytest.approx(960.0, abs=1.0)
     assert far < 930.0                       # the trough, not the storm
+
+
+# --------------------------------------------------------------------------
+# fcnv2_track.py - the global model's own track from the saved sub-domain
+# --------------------------------------------------------------------------
+
+f2 = _load("fcnv2_track")
+
+
+def test_fcnv2_grid_matches_the_saved_subdomain():
+    """The bounds must agree with what run_coupled_forecast writes.
+
+    Nothing in the npy records them, so an inconsistency here would place every
+    position by a fixed offset with no error anywhere.
+    """
+    lat, lon = f2.grid((361, 401))
+    assert lat[0] == pytest.approx(80.0) and lat[-1] == pytest.approx(-10.0)
+    assert lon[0] == pytest.approx(80.0) and lon[-1] == pytest.approx(180.0)
+    assert lat[1] - lat[0] < 0                       # descending, as FCNV2 stores it
+
+
+def test_fcnv2_centre_prefers_the_nearby_low_over_a_deeper_distant_one():
+    """Negative control for the search radius.
+
+    The saved box reaches 80 N, where a wintertime extratropical cyclone is
+    routinely deeper than a typhoon. Searched globally the track would jump to
+    it and stay.
+    """
+    ny, nx = 361, 401
+    lat, lon = f2.grid((ny, nx))
+    lon2d, lat2d = np.meshgrid(lon, lat)
+    arr = np.zeros((73, ny, nx))
+    msl = np.full((ny, nx), 101_000.0)
+    msl -= 4_000.0 * np.exp(-(((lon2d - 130.0) ** 2 + (lat2d - 20.0) ** 2) / 4.0))
+    msl -= 9_000.0 * np.exp(-(((lon2d - 150.0) ** 2 + (lat2d - 55.0) ** 2) / 9.0))
+    arr[f2.MSL_CHANNEL] = msl
+
+    lo, la, _ = f2.centre(arr, prev=(130.5, 20.5), search_deg=5.0)
+    assert lo == pytest.approx(130.0, abs=0.5)
+    assert la == pytest.approx(20.0, abs=0.5)
+
+    lo, la, _ = f2.centre(arr, prev=(130.5, 20.5), search_deg=90.0)
+    assert la > 40.0                                 # the extratropical low
