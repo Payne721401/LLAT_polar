@@ -123,6 +123,9 @@ def load_run(run_dir, lead, meta=None):
     return Field(up, sfc, meta)
 
 
+_NOTED = set()
+
+
 def load_era5(era5_dir, tc_id, valid_time, n, meta=None):
     """Truth from the combined.nc at the valid time, cropped to the model domain."""
     import xarray as xr
@@ -163,7 +166,11 @@ def load_era5(era5_dir, tc_id, valid_time, n, meta=None):
             sfc[..., names.index('landmask')] = np.isnan(
                 np.squeeze(ds['sst'].values)).astype(float)
             missing.remove('landmask')
-        if missing:
+        # Once per distinct set, not once per file. track_error and intensity
+        # each open one ERA5 file per lead, and thirty identical notices bury the
+        # table they are supposed to preface.
+        if missing and tuple(missing) not in _NOTED:
+            _NOTED.add(tuple(missing))
             print(f"  note: ERA5 file has no {', '.join(missing)}; "
                   "left blank (derived during the forecast, not stored)")
 

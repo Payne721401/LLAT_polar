@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>2026-08-05_簡報.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+
+<h1 id="dlampty">DLAMP.ty</h1>
+<h3 id="進度報告--2026-08-05">進度報告 — 2026-08-05</h3>
+<p><strong>目標</strong></p>
+<ol>
+<li><strong>降低運算量</strong></li>
+<li><strong>增加對颱風內核的關注度</strong></li>
+<li><strong>未來針對高解析資料做fine-tune</strong></li>
+</ol>
+<p><strong>做法</strong>:把模式從笛卡兒 (lat, lon) 網格改成 <strong>TC 中心極座標 (r, θ)</strong></p>
+<div class="pb"></div>
+<h2 id="1--極座標網格">1 · 極座標網格</h2>
+<img src="figures/fig08_grids.png" class="big">
+<div class="pb"></div>
+<h4 id="推論">推論</h4>
+<img src="figures/fig13_coupling.png" class="big">
+<ul>
+<li>極座標圓只涵蓋 <strong>78.5%</strong>, <strong>21.5% 被填 0</strong></li>
+</ul>
+<div class="pb"></div>
+<h4 id="初步結果r005">初步結果(r=0.05°)</h4>
+<img src="image-4.png" class="medium">
+<ul>
+<li>初步實驗結果不佳</li>
+</ul>
+<div class="pb"></div>
+<h2 id="2--目前切法">2 · 目前切法</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>笛卡兒</th>
+<th>r=0.05°</th>
+<th><strong>r=0.25°(本次)</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>網格</td>
+<td>81 × 81</td>
+<td>201 × 180</td>
+<td><strong>41 × 180</strong></td>
+</tr>
+<tr>
+<td>徑向間距 Δr</td>
+<td>0.25°(等向)</td>
+<td><strong>0.05°</strong></td>
+<td><strong>0.25°</strong></td>
+</tr>
+<tr>
+<td>方位間距 Δθ</td>
+<td>—</td>
+<td>2°</td>
+<td>2°</td>
+</tr>
+<tr>
+<td>window shape</td>
+<td>[2, 4, 4]</td>
+<td>[2, 10, 15]&amp;[2,  8, 10]</td>
+<td>[2, 10, 15]&amp;[2,  8, 10]</td>
+</tr>
+<tr>
+<td>patch shape</td>
+<td>[2, 4, 4]</td>
+<td>[2, 8, 6]</td>
+<td>[2, 8, 6]</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>window size/patch size須依據網格切法調整(還沒調)</li>
+<li>未來考慮<strong>增加 r 解析度、降低 θ 解析度</strong>(e.g. Δr=0.105°, Δθ = 3°)</li>
+</ul>
+<div class="pb"></div>
+<h2 id="3--目前訓練配置">3 · 目前訓練配置</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>r=0.05° 版</th>
+<th><strong>本次(r=0.25°)</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPU</td>
+<td>4 張</td>
+<td><strong>8 張 H200</strong></td>
+</tr>
+<tr>
+<td>每卡 batch</td>
+<td>1</td>
+<td><strong>4</strong></td>
+</tr>
+<tr>
+<td>精度</td>
+<td>fp32</td>
+<td><strong>實驗中</strong></td>
+</tr>
+<tr>
+<td>峰值學習率</td>
+<td>4e-4</td>
+<td><strong>實驗中</strong></td>
+</tr>
+<tr>
+<td>warmup</td>
+<td>1,000 步</td>
+<td>1,000 步</td>
+</tr>
+<tr>
+<td>梯度裁剪</td>
+<td>2.0</td>
+<td>2.0</td>
+</tr>
+<tr>
+<td><code>max_steps</code></td>
+<td>1,600,000</td>
+<td>105,000</td>
+</tr>
+<tr>
+<td>實跑步數</td>
+<td>252,160(<strong>15.8%</strong>)</td>
+<td><strong>104,979(100%)</strong></td>
+</tr>
+<tr>
+<td>高空變數(× 13 層)</td>
+<td>u, v, t, q, z, w</td>
+<td><strong>vt, vr</strong>, t, q, z, w</td>
+</tr>
+<tr>
+<td>地面變數</td>
+<td>u10, v10 + 其他(16個)</td>
+<td><strong>vt10, vr10</strong> + 其他(16個)</td>
+</tr>
+<tr>
+<td>總時數</td>
+<td>X</td>
+<td><strong>6.7 小時</strong></td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>變數表<strong>只差風的表示法</strong>(笛卡兒 u/v → 極座標切向/徑向 vt/vr),</li>
+</ul>
+<div class="pb"></div>
+<h4 id="效能-估計throughput-提升-80">效能: 估計Throughput 提升 80×</h4>
+<img src="figures/fig10_throughput.png">
+<ul>
+<li>每 epoch <strong>2.85 小時 → 2.1 分鐘</strong></li>
+</ul>
+<div class="pb"></div>
+<h2 id="4--bug-修正">4 · Bug 修正</h2>
+<p><strong>問題</strong> — <code>earth.specfic_bias</code>關掉但<code>torch.zeros</code> 產生的全0 bias仍要搬到GPU運算</p>
+<p><strong>修正</strong> — 移除 <code>attention + bias</code> 整條路徑</p>
+<p><strong>結果</strong> — forward <strong>快 18%</strong></p>
+<div class="pb"></div>
+<h2 id="5--實驗結果">5 · 實驗結果</h2>
+<h4 id="a-loss-spike--梯度爆炸">a. Loss spike + 梯度爆炸</h4>
+<img src="figures/fig05b_val_loss_states.png">
+<img src="figures/fig05_gradient_norm.png">
+<ul>
+<li>第一版bf16 + 0.0004 學習率導致梯度爆炸</li>
+</ul>
+<div class="pb"></div>
+<h4 id="a-loss-spike--梯度爆炸續">a. Loss spike + 梯度爆炸(續)</h4>
+<img src="image-1.png" class="big">
+<ul>
+<li>改小學習率後試跑穩定</li>
+</ul>
+<div class="pb"></div>
+<h4 id="b-初步實驗結果">b. 初步實驗結果</h4>
+<img src="figures/fig09_precision_matrix.png">
+<ul>
+<li>目標維持bf16/fp16(節省算力)</li>
+</ul>
+<div class="pb"></div>
+<h4 id="c-效能瓶頸gpu-利用率">c. 效能瓶頸(GPU 利用率)</h4>
+<p><strong>兩個訓練於3 小時的即時量測</strong></p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>GPU 使用率</th>
+<th>記憶體</th>
+<th>功耗</th>
+<th>CPU 閒置</th>
+<th>等 I/O</th>
+<th>節點負載</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>bf16</strong>(job 235101)</td>
+<td><strong>15%</strong></td>
+<td>6.2 / 143.8 GB</td>
+<td>150 W / 700 W</td>
+<td>63–85%</td>
+<td><strong>0%</strong></td>
+<td>34.5 / 96 核</td>
+</tr>
+<tr>
+<td><strong>fp32</strong>(job 235102)</td>
+<td>76–100%</td>
+<td>6.4 / 143.8 GB</td>
+<td>235 W / 700 W</td>
+<td>79–80%</td>
+<td><strong>0%</strong></td>
+<td>24.8 / 96 核</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>記憶體只用 <strong>4.4%</strong> ⇒ <strong>batch 還有約 20× 空間</strong></li>
+<li>bf16 計算量更小, GPU閒置更明顯(15% vs 76–100%)。</li>
+<li>GPU利用率低原因待研究</li>
+</ul>
+<p><strong>下一步</strong>:每卡 batch 4 → 16 或 32,但加大 batch 會改變有效學習率，必須再重調 LR</p>
+<div class="pb"></div>
+<h4 id="d-中心奇點問題">d. 中心奇點問題</h4>
+<img src="figures/fig12_interpolation.png">
+<div class="pb"></div>
+<h2 id="6--進行中--下一步">6 · 進行中 / 下一步</h2>
+<p><strong>正在跑</strong></p>
+<table>
+<thead>
+<tr>
+<th>實驗</th>
+<th>設定</th>
+<th>時數</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>正式訓練 A</td>
+<td>bf16 + LR 5e-5,105,000 步</td>
+<td>6.9 h</td>
+</tr>
+<tr>
+<td>正式訓練 B</td>
+<td>fp32 + LR 4e-4,96,000 步</td>
+<td>9.0 h</td>
+</tr>
+</tbody>
+</table>
+<p><img src="image-2.png" alt="alt text"></p>
+<div class="pb"></div>
+<h2 id="6--進行中--下一步續">6 · 進行中 / 下一步(續)</h2>
+<p><img src="image-3.png" alt="alt text"></p>
+<div class="pb"></div>
+<h2 id="6--進行中--下一步續-1">6 · 進行中 / 下一步(續)</h2>
+<p><strong>未來展望</strong></p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>項目</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>加大 batch</strong></td>
+<td><span class="warn"><strong>提高GPU 跟記憶體利用率</strong></td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>推論端</strong></td>
+<td>實驗不同配置、查看實際輸出</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong><code>r_min = Δr/2</code></strong></td>
+<td>消除中心奇點</td>
+</tr>
+<tr>
+<td>4</td>
+<td>調整window/patch</td>
+<td>避免算力浪費</td>
+</tr>
+</tbody>
+</table>
+<div class="pb"></div>
+<h1 id="附錄--變數表">附錄 · 變數表</h1>
+<p><strong>高空:6 變數 × 13 氣壓層</strong>
+氣壓層 = 50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000 hPa</p>
+<table>
+<thead>
+<tr>
+<th>變數</th>
+<th>意義</th>
+<th>極座標版</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>u</code>, <code>v</code></td>
+<td>東西 / 南北風</td>
+<td><strong><code>vt</code>, <code>vr</code></strong>(切向 / 徑向風)</td>
+</tr>
+<tr>
+<td><code>t</code></td>
+<td>溫度</td>
+<td>同左</td>
+</tr>
+<tr>
+<td><code>q</code></td>
+<td>比濕</td>
+<td>同左</td>
+</tr>
+<tr>
+<td><code>z</code></td>
+<td>重力位</td>
+<td>同左</td>
+</tr>
+<tr>
+<td><code>w</code></td>
+<td>垂直速度</td>
+<td>同左</td>
+</tr>
+</tbody>
+</table>
+<p><strong>地面:18 個物理變數 + 2 個座標 = 20 通道</strong></p>
+<table>
+<thead>
+<tr>
+<th>類別</th>
+<th>變數</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>風</td>
+<td><code>u10</code>, <code>v10</code> → <strong><code>vt10</code>, <code>vr10</code></strong></td>
+</tr>
+<tr>
+<td>熱力</td>
+<td><code>t2m</code>(2m 氣溫)、<code>d2m</code>(2m 露點)、<code>sst_filled</code>(海表溫)</td>
+</tr>
+<tr>
+<td>氣壓</td>
+<td><code>msl</code>(海平面)、<code>sp</code>(地面)</td>
+</tr>
+<tr>
+<td>水氣 / 降水</td>
+<td><code>tcwv</code>(整層可降水)、<code>tp</code>(總降水)</td>
+</tr>
+<tr>
+<td>輻射</td>
+<td><code>mtnlwrf</code>(頂層長波,對流指標)、<code>solar</code>(太陽輻射)</td>
+</tr>
+<tr>
+<td>地理</td>
+<td><code>hgt</code>(地形)、<code>landmask</code>(陸海遮罩)、<code>f</code>(科氏參數)</td>
+</tr>
+<tr>
+<td>時間編碼</td>
+<td><code>diurnal_sin/cos</code>(日循環)、<code>doy_sin/cos</code>(年循環)</td>
+</tr>
+<tr>
+<td><strong>座標</strong></td>
+<td><strong><code>lon</code>, <code>lat</code></strong> ← 由 <code>ingest_space_info: true</code> 自動附加</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><code>lon</code> / <code>lat</code> 是<strong>被預測的通道</strong></li>
+<li>三個版本(笛卡兒 / r=0.05° / r=0.25°)的變數表<strong>除了風之外完全相同</strong></li>
+</ul>
+<div class="pb"></div>
+
+</body>
+</html>

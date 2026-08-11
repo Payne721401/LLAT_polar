@@ -39,11 +39,24 @@ error is **49 km** — 35 systematic, 35 random — against persistence's 68, so
 beat persistence; `val_RMSE`'s 102 km is a field RMSE and half of it never reaches the
 centre.
 
-**Next, in order.** (1) the same sweep from a stronger initial time (`--start 2024102512`,
-`2024102700`) — is 1.45 a property of the model or of a 35 kt vortex? (2) `residual: true`
-masked to lon/lat, and `surface_var_weights`; with a residual connection persistence becomes
-the model's floor, which it currently is not. (3) P1, which is now about structure and
-intensity, not track.
+**Intensity is worse than the track.** The forecast bottoms out at 969 hPa where ERA5, its
+own training target, reaches 934 — and it never peaks or fills, while ERA5 does both. `patch_r
+= 8` spans 2° against a 0.3–0.5° radius of maximum wind, so the eyewall is inside one patch
+and the structure simply cannot be represented. **P1 is now the top priority**, on the
+quantity the polar grid was adopted to improve. Read intensity only where the track is still
+good: past +72 h the storms are in different places.
+
+**Two more initial times.** A stronger initial vortex is worth 16 % at +24 h (296 → 249 km),
+not the 30 % the paper's intensity split suggested. And the speed deficit is not a fraction:
+the shortfall over 24 h is 317 km on one case and 249 km on another whose ratios are 62 % and
+27 %, so it behaves more like a fixed distance. A multiplicative correction is the wrong
+shape.
+
+**Next, in order.** (1) **P1** — patch and windows for R = 41; cheaper *and* the intensity
+fix. (2) `residual: true` masked to lon/lat, and `surface_var_weights`; with a residual
+connection persistence becomes the model's floor, which it currently is not. (3) B3,
+`r_min = Δr/2`, which lives in the same place as P1 and must change in training and
+inference together.
 
 **Dead hypotheses, do not revisit without new evidence.** The lateral boundary (one-way and
 standalone agree to +96 h). The environment representation, i.e. P1 as a *track* problem

@@ -225,3 +225,76 @@ One storm, one initial time, and a weak one. The persistence baseline — the RM
 3-hourly displacement over the validation set — is still missing, and without it
 "102 km per step" cannot be called worse than doing nothing, only compared against
 this storm's own 104 km. The 1.45 factor is a median over one forecast.
+
+---
+
+# Addendum — two more initial times, and the intensity
+
+## Intensity: the polar grid's other purpose is not being served
+
+`tools/intensity.py`, init 2024-10-27 00Z, within 5° of the centre.
+
+| | deepest MSLP | strongest 10 m wind |
+|---|---|---|
+| forecast (scale 1.0) | 969.4 hPa | 29.7 m/s |
+| forecast (scale 1.45) | 959.7 hPa | 29.8 m/s |
+| **ERA5** | **934.2 hPa** | **40.1 m/s** |
+| best track | 925.0 hPa | 51.4 m/s |
+
+**35 hPa short of its own training target**, and the shape is wrong in both
+directions: ERA5 deepens from 985 to 934 hPa between +48 h and +66 h and fills
+back to about 1004 by +144 h, while the forecast creeps monotonically from 996 to
+970 over the whole 190 hours. No intensification, no decay, no peak.
+
+The ERA5-to-best-track gap — 934 against 925 hPa, 40 against 51 m/s — is the
+training data's own ceiling. A 0.25° analysis cannot resolve an eyewall, and no
+model trained on it can be asked to.
+
+**This is the first direct evidence for P1 on the quantity P1 was supposed to
+help.** `patch_r = 8` at Δr 0.25° spans 2° per patch while the radius of maximum
+wind is 0.3–0.5°: the eyewall lies inside a single patch, so the structure that
+makes a 934 hPa storm cannot be represented at all. Concentrating resolution on
+the core was one of the two reasons for going polar, and the inherited patch size
+gives it away.
+
+Two things this is not. It is not the missing landfall: ERA5 reaches 934 hPa over
+open ocean at +66 h, three days before Taiwan, with the forecast near 980 at the
+same time. The absent decay after +96 h is partly landfall — the forecast storm is
+at 128.0 °E, 19.5 °N when the real one is crossing Taiwan — but by then the track
+error is past 500 km, so the two storms are in different environments and the
+intensity comparison has stopped meaning anything. **Read intensity only where the
+track is still good.**
+
+## The weak-vortex hypothesis: real, and small
+
+Position error at +24 h, no rescaling:
+
+| initial time | intensity there | +24 h error |
+|---|---|---|
+| 2024-10-25 00Z | 35 kt, 998 hPa | 296 km |
+| 2024-10-25 12Z | | 282 km |
+| 2024-10-27 00Z | stronger | 249 km |
+
+A better-defined initial vortex is worth **16 %**, not the 30 % the paper's
+intensity split suggested. It is real and it is not the explanation.
+
+## The speed deficit is not a fraction — it looks additive
+
+Displacement over the first 24 h:
+
+| initial time | forecast | truth | ratio | shortfall |
+|---|---|---|---|---|
+| 2024-10-25 00Z | 516 km | 833 km | 62 % | 317 km |
+| 2024-10-27 00Z | 90 km | 339 km | 27 % | 249 km |
+
+The ratios differ by a factor of 2.3; the shortfalls differ by 27 %. **On these
+two cases the error behaves more like a fixed distance than a fixed fraction**,
+which is why 1.45 removed two thirds of the 24 h error on the first case and only
+16 % on the third — a slow-moving storm needs a factor near 3.8 and a fast one
+near 1.6.
+
+Two points is not a law. But it is enough to say a multiplicative correction is
+the wrong shape, which the within-case sweep had already suggested from a
+different direction, and it points at the objective rather than at a calibration:
+a loss that barely constrains the coordinate channels leaves a residual that does
+not scale with the signal.
