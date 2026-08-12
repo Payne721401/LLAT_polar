@@ -43,6 +43,23 @@ error is **49 km** — 35 systematic, 35 random — against persistence's 68, so
 beat persistence; `val_RMSE`'s 102 km is a field RMSE and half of it never reaches the
 centre.
 
+**The Cartesian model beats the polar one on both goals, on the same case.** 202421W from
+2024-10-27 00Z, v57_5d against the polar model: position error 67 km against 249 at +24 h,
+71 against 544 at +72 h, 252 against 745 at +120 h — **3 to 8 times better**. Its along-track
+error even goes positive around +42 h, so it has no systematic slow bias at all, while the
+polar model's runs monotonically to −795 km. Deepest MSLP 954 hPa against 969, with ERA5 at
+934. **The slow bias is not inherited from the framework; the polar reformulation introduced
+it**, which kills the earlier reading that a 0.43 % objective weight explains it — that
+weight is identical in both.
+
+**But this is not a controlled comparison and must not be quoted as one.** The paper trained
+v57_5d for 7 days on 8 A100s; the polar model had 6.7 h on 8 H200s, of the order of **an
+eighth of the compute**, on different data (vt/vr), a different wind representation, a
+different patch/window, and different hyperparameters. What would separate architecture from
+budget: train the polar model far longer and see whether the gap closes. Against that, the
+run was already 231 epochs with a 15.2 % train/val gap, so more steps may buy memorisation
+rather than skill — which is itself the thing to find out.
+
 **Intensity is worse than the track.** The forecast bottoms out at 969 hPa where ERA5, its
 own training target, reaches 934 — and it never peaks or fills, while ERA5 does both. `patch_r
 = 8` spans 2° against a 0.3–0.5° radius of maximum wind, so the eyewall is inside one patch
