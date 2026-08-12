@@ -15,6 +15,10 @@ Keep this block short and current. It is the first thing an agent reads, so it s
 answer "where is this project" in ten lines, not narrate history. Detail belongs in dated
 notes under `analysis/`; what was *done* belongs in the git log.
 
+**`analysis/` is untracked** — reports, figures and exported curves are outputs and are
+gitignored. So a dated note referenced here exists only on the machine that wrote it, and
+anything that must survive a fresh clone belongs in this block or in a commit message.
+
 **Works.** Training (val loss 0.24997, bf16 + LR 5e-5). ONNX export with verification.
 All three forecast modes to +240 h — a 10-day one-way forecast takes about a minute, so
 whole-season experiments are cheap. Five diagnostics: comparison figure, radial profile,
