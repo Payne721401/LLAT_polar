@@ -296,3 +296,55 @@ def test_fcnv2_centre_prefers_the_nearby_low_over_a_deeper_distant_one():
 
     lo, la, _ = f2.centre(arr, prev=(130.5, 20.5), search_deg=90.0)
     assert la > 40.0                                 # the extratropical low
+
+
+# --------------------------------------------------------------------------
+# patch_design.py - the arithmetic the training config rests on
+# --------------------------------------------------------------------------
+
+pd_ = _load("patch_design")
+
+
+def test_token_grid_matches_the_model_that_was_trained():
+    """8 x 6 x 30 is what the current configuration actually produces.
+
+    The vertical +1 is the surface field, embedded separately and appended as one
+    more level; without it the count is 7 and every padding fraction below is
+    wrong.
+    """
+    assert pd_.tokens(13, 41, 180, (2, 8, 6)) == (8, 6, 30)
+    assert pd_.plan(41, 180, (2, 8, 6), (2, 10, 15), (2, 8, 10))['n_tokens'] == 1440
+
+
+def test_coarse_stage_is_mostly_padding_at_the_current_setting():
+    p = pd_.plan(41, 180, (2, 8, 6), (2, 10, 15), (2, 8, 10))
+    assert p['crs'][2] == pytest.approx(0.281, abs=0.005)
+    assert p['patch_deg'] == pytest.approx(2.0, abs=0.01)
+
+
+def test_odd_token_counts_are_rejected_before_the_gpu_sees_them():
+    """B8: DownSample hands a 5-D tensor to a 2-D replicate pad, which raises.
+
+    Checked against the real model in test_the_rejected_design_really_crashes;
+    this is the arithmetic that has to agree with it.
+    """
+    assert pd_.plan(41, 180, (2, 8, 6), (2, 10, 15), (2, 8, 10))['legal']
+    assert not pd_.plan(41, 180, (2, 4, 6), (2, 6, 15), (2, 6, 15))['legal']
+    assert pd_.plan(40, 180, (2, 4, 6), (2, 6, 15), (2, 6, 15))['legal']
+
+
+@pytest.mark.slow
+def test_the_rejected_design_really_crashes():
+    """Negative control for the whole table.
+
+    A rule that is only ever asserted is a belief. R = 41 with patch_r = 4 gives
+    11 radial tokens, and the model must fail on it - otherwise the constraint is
+    costing us designs for no reason.
+    """
+    import torch
+    from models.pangu_polar import PanguPolarModel
+    m = PanguPolarModel((13, 41, 180), 6, 20, [2, 6], [6, 12], 192,
+                        (2, 4, 6), (2, 6, 15), (2, 6, 15)).eval()
+    with pytest.raises(NotImplementedError, match="5D input"):
+        with torch.no_grad():
+            m(torch.randn(1, 13, 41, 180, 6), torch.randn(1, 41, 180, 20))
