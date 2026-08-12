@@ -49,3 +49,4 @@ analysis/*.html
 # command. Training-analysis figures under analysis/figures/training/ ARE tracked:
 # those come from runs that will not happen again.
 analysis/figures/forecasts/
+analysis/image-4.png
