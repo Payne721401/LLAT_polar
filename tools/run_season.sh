@@ -105,7 +105,15 @@ else
         fi' "$OUT" "$HERE" "$PASS_STR" | tee "$RESULTS"
 fi
 
+ok=$(grep -c ' ok$' "$RESULTS" || true)
+skipped=$(grep -c 'already done' "$RESULTS" || true)
+failed=$(grep -c 'FAILED' "$RESULTS" || true)
+
 echo
-echo "finished in $(( ($(date +%s) - start) / 60 )) min"
-echo "failures: $(grep -lc . "$LOGS"/*.log 2>/dev/null | wc -l) logs written; "\
-     "check with  grep -l Traceback $LOGS/*.log"
+echo "finished in $(( ($(date +%s) - start) / 60 )) min: $ok run, $skipped skipped, $failed failed"
+if [ "$failed" -gt 0 ]; then
+    echo "the failures, and the last line of each log:"
+    grep 'FAILED' "$RESULTS" | awk '{print $1}' | while read -r tc; do
+        echo "  $tc: $(tail -1 "$LOGS/$tc.log")"
+    done
+fi
