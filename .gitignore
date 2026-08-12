@@ -50,3 +50,16 @@ analysis/*.html
 # those come from runs that will not happen again.
 analysis/figures/forecasts/
 analysis/image-4.png
+
+# analysis/ is a working area, not a source tree. Reports (both the lab's and
+# those written during investigation), their embedded images, the exported
+# TensorBoard CSVs and every figure are untracked: they are outputs, they churn
+# wholesale on each regeneration, and they were pulling ~12 MB through every
+# clone. The scripts and the notebook that produce them stay tracked.
+#
+# Findings that must survive belong in CLAUDE.md and in commit messages, not in
+# analysis/ — a note that is not tracked is not a record.
+analysis/*.md
+analysis/*.csv
+analysis/*.png
+analysis/figures/
