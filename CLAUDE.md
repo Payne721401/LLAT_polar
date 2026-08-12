@@ -134,7 +134,14 @@ Three, and they are not interchangeable.
 | Local Windows | `ty-dev` (conda, CPU torch) | tests, analysis notebooks |
 
 `/mamba/envs` on the lab host belongs to another user and is not writable — build
-environments under `~/envs` with `conda create -p`.
+environments under `~/envs` with `conda create -p`. `conda install` from `(base)` there fails
+with `EnvironmentNotWritableError`, which reads like a permissions change and is not one.
+
+Tools live in the environment that installed them, `git-lfs` included, so a `git clone` of an
+LFS repository succeeds under `llat_infer` and the same repository's `git restore` fails under
+`(base)` with `git-lfs: not found`. When only one large file is wanted, skip git entirely:
+`curl -L https://media.githubusercontent.com/media/{owner}/{repo}/{ref}/{path}` fetches LFS
+content directly, where the usual `.../raw/...` URL returns a 130-byte pointer.
 
 **Do not run the derived-variable chain locally.** `calc_additional_vars` regrids a global
 land mask and evaluates solar position per grid point; on Windows it appears to hang. Test
