@@ -348,3 +348,33 @@ def test_the_rejected_design_really_crashes():
     with pytest.raises(NotImplementedError, match="5D input"):
         with torch.no_grad():
             m(torch.randn(1, 13, 41, 180, 6), torch.randn(1, 41, 180, 20))
+
+
+# --------------------------------------------------------------------------
+# season_bias.py - which model of the shortfall fits
+# --------------------------------------------------------------------------
+
+sb = _load("season_bias")
+
+
+def test_fit_recovers_a_multiplicative_shortfall():
+    obs = np.linspace(100, 900, 60)
+    pred = 0.7 * obs
+    k, c, r_mult, r_add = sb.fit_both(obs, pred)
+    assert k == pytest.approx(0.7, abs=0.01)
+    assert r_mult < 1.0
+    assert r_mult < r_add                    # and it must win
+
+
+def test_fit_recovers_an_additive_shortfall():
+    """Negative control for the test above: same code, opposite answer.
+
+    If the fit could not distinguish these, the season conclusion would be
+    whichever model happened to be checked first.
+    """
+    obs = np.linspace(100, 900, 60)
+    pred = obs - 250.0
+    k, c, r_mult, r_add = sb.fit_both(obs, pred)
+    assert c == pytest.approx(250.0, abs=1.0)
+    assert r_add < 1.0
+    assert r_add < r_mult
