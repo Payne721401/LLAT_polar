@@ -13,10 +13,21 @@ a disc of radius 10 against a square reaching 14.1 degrees into its corners, so
 the diagonals, where a ridge to the north-east would be, are exactly what was
 given up.
 
-This measures the size of that. For a real analysis it computes the deep-layer
-steering over discs of growing radius. If the estimate has settled by 10 degrees
-the domain is big enough and the failure is elsewhere; if it is still moving, the
-model is being asked to steer a storm using a flow it cannot see.
+The test is which radius best predicts the storm's actual motion, not which
+radius the disc mean stops changing at.
+
+That distinction cost a wrong conclusion once and is worth stating. A first
+version reported only how much the disc-mean shifts between 8 and 14 degrees, got
+3.25 m/s, and declared the domain too small. It does not follow: the large-scale
+flow varies with radius for every storm, and a 14-degree mean sweeps in a great
+deal that does not steer anything. The literature settles on a deep-layer mean
+over roughly 5-7 degrees precisely because that is what predicts motion best -
+which would make 10 degrees ample.
+
+So the question has to be asked against the answer. For each radius, compare the
+steering there with where the storm actually went. Whichever radius tracks the
+motion most closely is the one that matters, and only if that lies outside the
+domain is the boundary implicated.
 
 No model and no training involved - this is a property of the atmosphere and of
 where the domain boundary was drawn.
@@ -68,47 +79,72 @@ def main(args):
              for t in args.times.split(',')]
     radii = [float(r) for r in args.radii.split(',')]
 
-    print(f"deep-layer steering over discs of growing radius\n")
-    print(f"{'valid':<14}" + "".join(f"{r:>7.0f}deg" for r in radii)
-          + f"{'change 8->max':>16}")
-    print("-" * (14 + 10 * len(radii) + 16))
-
-    drifts = []
+    # Where the storm actually went, from the analysed centres either side.
+    centres = {}
     for t in times:
+        for dt in (-args.dt, 0, args.dt):
+            tt = t + datetime.timedelta(hours=dt)
+            if tt in centres:
+                continue
+            try:
+                g = pf.load_era5(era5, args.tc_id, tt, args.n, None)
+            except FileNotFoundError:
+                continue
+            centres[tt] = (float(np.nanmean(g.lon)), float(np.nanmean(g.lat)))
+
+    print("steering at each radius, against where the storm actually went\n")
+    print(f"{'valid':<16}{'motion':>9}" +
+          "".join(f"{r:>6.0f}deg" for r in radii))
+    print("-" * (25 + 9 * len(radii)))
+
+    err = {r: [] for r in radii}
+    for t in times:
+        a = centres.get(t - datetime.timedelta(hours=args.dt))
+        b = centres.get(t + datetime.timedelta(hours=args.dt))
+        if not (a and b):
+            print(f"{t:%Y-%m-%d %HZ}   (no motion: needs +/-{args.dt} h)")
+            continue
+        lat = centres[t][1] if t in centres else b[1]
+        dx, dy = st.km(b[0] - a[0], b[1] - a[1], lat)
+        dt_s = 2 * args.dt * 3600.0
+        mot = (dx * 1000.0 / dt_s, dy * 1000.0 / dt_s)
+
         try:
             f = pf.load_era5(era5, args.tc_id, t, args.n, None)
         except FileNotFoundError:
-            print(f"{t:%Y-%m-%d %HZ}   (no file)")
             continue
-        vals = [steering_at(f, r, pf.LEVELS) for r in radii]
-        cells = "".join(f"{np.hypot(*v):>7.1f}   " if v else f"{'-':>10}"
-                        for v in vals)
-        # How much the answer is still moving between a comfortably interior
-        # radius and the largest one the data supports.
-        a = next((v for r, v in zip(radii, vals) if r >= 8.0 and v), None)
-        b = next((v for r, v in reversed(list(zip(radii, vals))) if v), None)
-        d = np.hypot(b[0] - a[0], b[1] - a[1]) if (a and b) else float('nan')
-        drifts.append(d)
-        print(f"{t:%Y-%m-%d %HZ} {cells}{d:>13.2f} m/s")
+        cells = ""
+        for r in radii:
+            v = steering_at(f, r, pf.LEVELS)
+            if v is None:
+                cells += f"{'-':>9}"
+                continue
+            e = float(np.hypot(v[0] - mot[0], v[1] - mot[1]))
+            err[r].append(e)
+            cells += f"{e:>9.2f}"
+        print(f"{t:%Y-%m-%d %HZ} {np.hypot(*mot):>8.1f} {cells}")
 
-    if drifts:
-        d = np.array([x for x in drifts if np.isfinite(x)])
-        print(f"\nmedian change beyond 8 degrees: {np.median(d):.2f} m/s")
-        print(f"for scale, a storm moves at 3-10 m/s, and the model follows its")
-        print(f"own steering at 0.78x - a 22 % shortfall on 6 m/s is 1.3 m/s.")
-        if np.median(d) > 0.5:
-            print("\nThe estimate is still moving at the domain edge. Whatever")
-            print("lies outside is steering information the model never sees,")
-            print("and no amount of training recovers it.")
+    have = [r for r in radii if err[r]]
+    if have:
+        med = {r: float(np.median(err[r])) for r in have}
+        best = min(med, key=med.get)
+        print(f"\n{'radius':>8} {'median |steering - motion|':>28}")
+        for r in have:
+            mark = "  <- best" if r == best else ""
+            print(f"{r:>6.0f}deg {med[r]:>24.2f} m/s{mark}")
+        print(f"\nThe steering that best matches the motion is at {best:g} degrees.")
+        if best >= max(have) - 1e-9:
+            print("That is the largest radius tested, so the relationship has not")
+            print("turned over and a wider domain might still be buying something;")
+            print("extend --radii before concluding anything.")
+        elif best > 10.0:
+            print("That is OUTSIDE the 10-degree disc the model sees, so the")
+            print("boundary is implicated and no amount of training fixes it.")
         else:
-            print("\nThe estimate has settled well inside the domain, so the")
-            print("boundary is not what these failures are about.")
-
-    print("\nread this next to the disc-versus-square question: the polar grid")
-    print("keeps r <= 10 while the Cartesian square reached 14.1 into its")
-    print("corners, so any ridge to the north-east sat in the part that was")
-    print("given up. Run tools/steering.py on the same case to see whether the")
-    print("model's own steering matches ERA5's at the radius it can see.")
+            print("That is INSIDE the 10-degree disc, so the model is shown the")
+            print("flow that matters and these failures are not about the domain")
+            print("size. Look at what it does with it instead - tools/steering.py")
+            print("compares the model's own steering against ERA5's.")
 
 
 if __name__ == "__main__":
@@ -121,6 +157,9 @@ if __name__ == "__main__":
     p.add_argument("--radii", default="2,4,6,8,10,12,14",
                    help="disc radii in degrees; beyond 10 needs the uncropped "
                         "161x161 file, which is what for_DLAMPty holds")
+    p.add_argument("--dt", type=int, default=6,
+                   help="half-window for the centred difference that gives the "
+                        "observed motion; 6 h means comparing t-6 with t+6")
     p.add_argument("--n", type=int, default=161,
                    help="grid size to read; 161 keeps the corners the model "
                         "does not get to see")
