@@ -56,6 +56,25 @@ def truth_centre(era5_dir, tc_id, valid, n, meta):
     return _TRUTH[key]
 
 
+def forecast_centre(run_dir, lead, meta):
+    """The declared centre, reading only what it needs.
+
+    pf.load_run also loads output_upper_*.npy, which is 2.5 MB against the
+    surface file's 0.5 MB and is not consulted here at all. Over a season that is
+    several gigabytes pulled across a network filesystem to be discarded, and it
+    is why these tools appeared to hang while a single case felt instant.
+
+    mmap_mode leaves the file on disk and touches only the pages holding the last
+    two channels, so even the surface array is not read in full.
+    """
+    p = os.path.join(pf.forecast_dir(run_dir), f"output_sfc_{lead:0>3}h.npy")
+    sfc = np.load(p, mmap_mode='r')
+    names = meta['surface_vars'] if meta else pf.SFC
+    lon = np.asarray(sfc[..., names.index('lon')], dtype=float)
+    lat = np.asarray(sfc[..., names.index('lat')], dtype=float)
+    return float(np.nanmean(lon)), float(np.nanmean(lat)), sfc.shape[0]
+
+
 MODE_DIR = {'one-way': 'one_way_couple_model_{v}',
             'two-way': '2_way_circle_couple_model_{v}',
             'standalone': 'standalone_{v}'}
@@ -81,13 +100,12 @@ def errors_for(run_dir, era5_dir, tc_id, init_str):
     out = {}
     for h in pf.available_leads(run_dir):
         try:
-            f = pf.load_run(run_dir, h, meta)
+            flon, flat, n = forecast_centre(run_dir, h, meta)
             tlon, tlat = truth_centre(era5_dir, tc_id,
                                       init + datetime.timedelta(hours=h),
-                                      f.sfc.shape[0], meta)
+                                      n, meta)
         except (FileNotFoundError, OSError):
             continue                      # ERA5 is 6-hourly; storms also end
-        flon, flat = te.centre(f)
         ex, ey = te.km(flon - tlon, flat - tlat, tlat)
         out[h] = float(np.hypot(ex, ey))
     return out

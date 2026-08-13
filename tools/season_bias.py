@@ -45,13 +45,13 @@ def displacements(run_dir, era5_dir, tc_id, init_str, window_h=24):
     fc, tr = {}, {}
     for h in pf.available_leads(run_dir):
         try:
-            f = pf.load_run(run_dir, h, meta)
+            flon, flat, n = ss.forecast_centre(run_dir, h, meta)
             tr[h] = ss.truth_centre(era5_dir, tc_id,
                                     init + datetime.timedelta(hours=h),
-                                    f.sfc.shape[0], meta)
+                                    n, meta)
         except (FileNotFoundError, OSError):
             continue
-        fc[h] = te.centre(f)
+        fc[h] = (flon, flat)
 
     out = []
     for h in sorted(tr):

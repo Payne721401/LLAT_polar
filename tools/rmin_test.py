@@ -84,9 +84,12 @@ def main(args):
             field = np.squeeze(ds[args.var].values).astype(float)
             if field.ndim > 2:
                 field = field[field.shape[0] // 2]
-        n = min(field.shape)
-        field = field[:n, :n]
-        label = f"{args.var} from {args.nc}"
+        ny, nx = field.shape
+        n = args.crop or min(ny, nx)
+        oy, ox = (ny - n) // 2, (nx - n) // 2
+        field = field[oy:oy + n, ox:ox + n]
+        crop_note = f"\n  cropped {ny}x{nx} -> {n}x{n}" if (ny, nx) != (n, n) else ""
+        label = f"{args.var} from {args.nc}{crop_note}"
     else:
         field = synthetic(args.n, args.rmw, args.res)
         n, label = args.n, f"synthetic vortex, RMW {args.rmw:g} deg"
@@ -128,6 +131,10 @@ if __name__ == "__main__":
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--nc", default=None, help="a combined.nc to test on instead")
     p.add_argument("--var", default="msl")
+    p.add_argument("--crop", type=int, default=81,
+                   help="centre-crop the file to this size first. The saved "
+                        "combined.nc is 161x161 while the model runs on 81x81, "
+                        "and testing the wrong domain gives the wrong dr")
     p.add_argument("--n", type=int, default=81)
     p.add_argument("--R", type=int, default=41)
     p.add_argument("--Theta", type=int, default=180)
