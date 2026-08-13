@@ -112,8 +112,8 @@ def errors_for(run_dir, era5_dir, tc_id, init_str):
 
 
 def collect(root, era5_root, version, mode, limit=0):
-    """Every case's error curve, keyed by lead."""
-    by_lead, cases, skipped = {}, 0, []
+    """Every case's error curve, keyed by lead, plus the per-case curves."""
+    by_lead, per_case, cases, skipped = {}, [], 0, []
     starts = find_starts(root, version, mode)
     if limit:
         starts = starts[:limit]
@@ -128,9 +128,36 @@ def collect(root, era5_root, version, mode, limit=0):
             skipped.append(f"{tc}/{init} (no matching truth)")
             continue
         cases += 1
+        per_case.append((tc, init, path, e))
         for h, v in e.items():
             by_lead.setdefault(h, []).append(v)
-    return by_lead, cases, skipped
+    return by_lead, cases, skipped, per_case
+
+
+def report_worst(per_case, era5_root, n_worst, at_lead=None):
+    """Name the worst cases, with a command that plots each one.
+
+    Finding them by hand means reading a table, picking a storm, then assembling
+    a path out of three conventions - which is how a command full of {TCID}
+    placeholders gets run verbatim.
+    """
+    scored = []
+    for tc, init, path, e in per_case:
+        if not e:
+            continue
+        h = at_lead if at_lead in e else max(e)
+        scored.append((e[h], h, tc, init, path))
+    scored.sort(reverse=True)
+
+    print(f"\nworst {min(n_worst, len(scored))} cases"
+          + (f" at +{at_lead} h" if at_lead else " at their last common lead"))
+    for err, h, tc, init, path in scored[:n_worst]:
+        print(f"\n  {tc} {init}   {err:.0f} km at +{h} h")
+        print(f"    python tools/track_error.py \\\n"
+              f"      --run \"{tc}={path}\" \\\n"
+              f"      --era5 {os.path.join(era5_root, tc, 'ERA5', 'for_DLAMPty')} \\\n"
+              f"      --tc-id {tc} --init {init} \\\n"
+              f"      --out analysis/figures/forecasts/{tc}/{init}/track.png")
 
 
 def main(args):
@@ -142,8 +169,8 @@ def main(args):
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
 
     for name, root in runs:
-        by_lead, n_cases, skipped = collect(root, args.era5_root, args.version,
-                                            args.mode, args.limit)
+        by_lead, n_cases, skipped, per_case = collect(
+            root, args.era5_root, args.version, args.mode, args.limit)
         if not by_lead:
             raise SystemExit(f"{name}: no cases with truth under {root}")
 
@@ -174,6 +201,10 @@ def main(args):
             print(f"{h:>4}h {n[i]:>4} {med[i]:>8.0f}k {mean[i]:>8.0f}k "
                   f"{q1[i]:>7.0f}k {q3[i]:>7.0f}k {max(by_lead[h]):>8.0f}k")
 
+        if args.worst:
+            report_worst(per_case, os.path.expanduser(args.era5_root),
+                         args.worst, args.worst_at)
+
     axes[0].set_ylabel("position error [km]")
     axes[0].set_title("season median, shaded interquartile range\n"
                       "dashed is the mean — where it separates, a few cases carry it",
@@ -203,6 +234,11 @@ if __name__ == "__main__":
     p.add_argument("--mode", default="one-way",
                    choices=["one-way", "two-way", "standalone"])
     p.add_argument("--limit", type=int, default=0, help="first N cases, for a smoke test")
+    p.add_argument("--worst", type=int, default=0,
+                   help="also name the N worst cases, each with the command "
+                        "that plots it")
+    p.add_argument("--worst-at", type=int, default=120,
+                   help="the lead to rank them at")
     p.add_argument("--print-every", type=int, default=24)
     p.add_argument("--out", default="season.png")
     p.add_argument("--dpi", type=int, default=150)
