@@ -1,4 +1,5 @@
 # from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint, DeviceStatsMonitor
+import os
 import time
 import torch
 import lightning.__version__ as lightning_version
@@ -43,10 +44,20 @@ class ElapsedTimeCallback(Callback):
 
 
 def main():
+    # A checkpoint here is 305 MB - 24.1 M parameters plus two Adam moments - and
+    # one is written every epoch, which at 455 steps is under two minutes. Keeping
+    # thirty of them is 9.2 GB per run, and a run that fills the quota dies
+    # mid-write: the file is truncated, the exception is a disk error rather than
+    # anything about the model, and forty-seven minutes of healthy training is
+    # discarded with nothing in the log to say why. That is how job 257976 ended.
+    #
+    # Settable from the environment so a job script can lower it without editing
+    # code, and defaulting to the old value so no existing run changes silently.
+    save_top_k = int(os.environ.get("SAVE_TOP_K", "30"))
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
         mode="min",
-        save_top_k=30,
+        save_top_k=save_top_k,
         save_last='link',
         filename="{elapsed_time_days:02.0f}d-{elapsed_time_hours:04.1f}h-vl{val_loss:9.7f}-e{epoch}-s{step}",
         auto_insert_metric_name=False,
