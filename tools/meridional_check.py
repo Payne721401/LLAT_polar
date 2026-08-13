@@ -1,24 +1,22 @@
 """Does a northward wind survive the trip into polar coordinates and back?
 
-The steering diagnostic on 202414W turned up something a training deficiency
-cannot produce. Correlating the model's own deep-layer steering against the
-motion of its own frame:
+WRITTEN TO CHASE A HYPOTHESIS THAT DID NOT SURVIVE. Kept because the check is
+worth having and because the way it failed is worth remembering.
 
-    ERA5    r(u) +0.93    r(v) +0.74
-    polar   r(u) +0.99    r(v) -0.48
+One forecast - 202414W from 2024-09-16 00Z - gave r(u) +0.99 and r(v) -0.48 for
+the model's own deep-layer steering against the motion of its own frame, against
+ERA5's +0.93 and +0.74. An inverted meridional coupling is what a sign error
+looks like, where an under-trained model would degrade both components, so the
+latitude axis became the suspect: ERA5 stores it descending, row index grows
+southward, v is positive northward, and reconciling those in the polar sampling
+but not the vt/vr rotation would flip v and leave u alone.
 
-The zonal coupling is perfect - better than the analysis. The meridional one is
-*inverted*. The model moved that storm north while its own winds said the
-environment was pushing it south, which is not a model being imprecise; it is a
-model being consistent about the wrong sign. And it is the same storm whose
-forecast turned north when the real one kept going west.
-
-A learned weakness degrades both components. Inverting one is what a sign error
-looks like, and the candidate is the latitude axis: ERA5 stores it descending, so
-row index increases southward, while `v` is positive northward. Anywhere theta is
-built from row and column indices - the polar sampling, the vt/vr rotation - the
-two conventions have to be reconciled, and reconciling them in one place but not
-the other flips v and leaves u alone.
+Three more forecasts settled it, and not the way the story wanted. 202414W from
+2024-09-15 12Z gives r(v) of +0.92, +0.95, +0.88, +0.85; 202421W gives +0.68,
++0.87, +0.81; 202422W is negative only at 850 hPa. The -0.48 was one case. The
+mechanism below finds nothing because there is nothing to find, and the general
+lesson is the cost of building an explanation on a single number before checking
+whether it replicates.
 
 This tests exactly that, on the real transforms rather than a re-implementation:
 build a field whose wind is uniform and purely northward, push it through
