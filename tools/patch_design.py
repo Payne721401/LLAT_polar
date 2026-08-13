@@ -18,9 +18,20 @@ whole number of windows. At R = 41 the coarse stage holds 3 radial tokens inside
 an 8-wide window, so five sixths of that axis is padding that is computed and
 then masked. The "real" fraction below is the product over the three axes.
 
-**What it costs.** Attention is quadratic in window volume and linear in the
-number of windows, so cost scales as n_windows x volume^2, summed over the blocks
-at each stage. Reported relative to the current configuration.
+**What it costs.** Two different numbers, and confusing them is a trap this file
+exists partly to close.
+
+The `cost` column is *attention* work: quadratic in window volume, linear in the
+number of windows. By that measure the candidates look much cheaper than the
+current setting. They are not, end to end, because a smaller patch produces more
+tokens - R = 40 with patch_r = 4 gives 10 radial tokens against 6 - and
+everything outside attention scales with the token count. The 1.67x more tokens
+very nearly cancels the attention saving.
+
+--time measures the whole forward and backward instead. On CPU the wide-window
+candidate comes out at 0.98x and the uniform one at 0.87x, against 0.74x and
+0.47x by attention alone. Use --time, or better `job_scripts/calibrate.sh` on the
+real hardware, before setting max_steps from a throughput assumption.
 
 The numbers are derived arithmetically and then checked against the model itself:
 --verify instantiates it, counts the blocks the analytic model assumed, and runs
@@ -154,6 +165,32 @@ def main(args):
     print("               maximum wind is 0.3-0.5 deg: a patch wider than that")
     print("               cannot represent an eyewall, whatever the training")
 
+    if args.time:
+        import time
+        import torch
+        print("
+end-to-end forward + backward on CPU — the attention column "
+              "above does not
+predict this, because a smaller patch makes more "
+              "tokens and everything
+outside attention scales with them")
+        base_t = None
+        for name, R, patch, w1, w2 in CANDIDATES:
+            Theta = 96 if patch[2] == 4 else 180
+            if not plan(R, Theta, patch, w1, w2)['legal']:
+                continue
+            from models.pangu_polar import PanguPolarModel
+            m = PanguPolarModel((Z_LEVELS, R, Theta), 6, 20, [2, 6], [6, 12],
+                                192, patch, w1, w2)
+            u, sfc = torch.randn(1, Z_LEVELS, R, Theta, 6), torch.randn(1, R, Theta, 20)
+            a, b = m(u, sfc); (a.sum() + b.sum()).backward(); m.zero_grad()
+            t0 = time.time()
+            for _ in range(3):
+                a, b = m(u, sfc); (a.sum() + b.sum()).backward(); m.zero_grad()
+            dt = (time.time() - t0) / 3
+            base_t = base_t or dt
+            print(f"  {name:<24} {dt:>6.2f} s   {dt/base_t:>5.2f}x")
+
     if args.verify:
         import sys
         import os
@@ -187,4 +224,8 @@ if __name__ == "__main__":
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--verify", action="store_true",
                    help="also build each model and run a forward pass")
+    p.add_argument("--time", action="store_true",
+                   help="measure forward+backward wall-clock, which is the "
+                        "number that matters and which the attention column "
+                        "does not predict")
     main(p.parse_args())
