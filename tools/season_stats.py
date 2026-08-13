@@ -43,6 +43,19 @@ te = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(te)
 pf = te.pf
 
+# (tc_id, valid_time) -> centre. Starts overlap, so the +24 h truth of one is the
+# +0 h truth of the next, and without this each file is opened a dozen times from
+# a network filesystem. That is what makes a season look like it has hung.
+_TRUTH = {}
+
+
+def truth_centre(era5_dir, tc_id, valid, n, meta):
+    key = (tc_id, valid)
+    if key not in _TRUTH:
+        _TRUTH[key] = te.centre(pf.load_era5(era5_dir, tc_id, valid, n, meta))
+    return _TRUTH[key]
+
+
 MODE_DIR = {'one-way': 'one_way_couple_model_{v}',
             'two-way': '2_way_circle_couple_model_{v}',
             'standalone': 'standalone_{v}'}
@@ -69,13 +82,12 @@ def errors_for(run_dir, era5_dir, tc_id, init_str):
     for h in pf.available_leads(run_dir):
         try:
             f = pf.load_run(run_dir, h, meta)
-            t = pf.load_era5(era5_dir, tc_id,
-                             init + datetime.timedelta(hours=h),
-                             f.sfc.shape[0], meta)
+            tlon, tlat = truth_centre(era5_dir, tc_id,
+                                      init + datetime.timedelta(hours=h),
+                                      f.sfc.shape[0], meta)
         except (FileNotFoundError, OSError):
             continue                      # ERA5 is 6-hourly; storms also end
         flon, flat = te.centre(f)
-        tlon, tlat = te.centre(t)
         ex, ey = te.km(flon - tlon, flat - tlat, tlat)
         out[h] = float(np.hypot(ex, ey))
     return out

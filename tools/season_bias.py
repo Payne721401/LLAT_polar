@@ -46,12 +46,12 @@ def displacements(run_dir, era5_dir, tc_id, init_str, window_h=24):
     for h in pf.available_leads(run_dir):
         try:
             f = pf.load_run(run_dir, h, meta)
-            t = pf.load_era5(era5_dir, tc_id,
-                             init + datetime.timedelta(hours=h),
-                             f.sfc.shape[0], meta)
+            tr[h] = ss.truth_centre(era5_dir, tc_id,
+                                    init + datetime.timedelta(hours=h),
+                                    f.sfc.shape[0], meta)
         except (FileNotFoundError, OSError):
             continue
-        fc[h], tr[h] = te.centre(f), te.centre(t)
+        fc[h] = te.centre(f)
 
     out = []
     for h in sorted(tr):
@@ -121,25 +121,37 @@ def main(args):
     axes[0].set_title("if the orange line fits, a scalar correction works;\n"
                       "if the green one does, no scalar can", fontsize=10)
 
+    # The ratio, not the absolute shortfall. Storms move faster as they recurve,
+    # so if the error is multiplicative then plotting kilometres by latitude just
+    # redraws the speed profile and says nothing new. The ratio divides that out:
+    # a flat line means one scalar covers every latitude, and a sloping one means
+    # the model is differently wrong where its training examples are thinner.
     edges = np.arange(5, 45, 5.0)
-    mids, med, n = [], [], []
+    mids, ratio, speed, n = [], [], [], []
     for lo, hi in zip(edges[:-1], edges[1:]):
         m = (lat >= lo) & (lat < hi)
         if m.sum() < 5:
             continue
         mids.append(0.5 * (lo + hi))
-        med.append(np.median((obs[m] - pred[m])))
+        ratio.append(float(np.sum(obs[m] * pred[m]) / np.sum(obs[m] * obs[m])))
+        speed.append(float(np.median(obs[m])))
         n.append(int(m.sum()))
-    axes[1].bar(mids, med, width=4.0, color='tab:blue', alpha=0.75)
-    for x_, y_, n_ in zip(mids, med, n):
-        axes[1].text(x_, y_, f"n={n_}", ha='center', va='bottom', fontsize=7)
+    axes[1].bar(mids, ratio, width=4.0, color='tab:blue', alpha=0.75)
+    axes[1].axhline(k, ls='--', c='tab:orange', lw=1.5,
+                    label=f'season fit, {k:.2f}x')
+    axes[1].axhline(1.0, c='k', lw=1.0, label='no bias')
+    for x_, y_, n_ in zip(mids, ratio, n):
+        axes[1].text(x_, y_ + 0.01, f"n={n_}", ha='center', va='bottom', fontsize=7)
     axes[1].set_xlabel("latitude [°N]")
-    axes[1].set_ylabel(f"median shortfall in {args.window} h [km]")
-    axes[1].set_title("where the motion goes missing", fontsize=10)
+    axes[1].set_ylabel("forecast / observed displacement")
+    axes[1].set_ylim(0, 1.15)
+    axes[1].legend(fontsize=8)
+    axes[1].set_title("flat means one scalar covers every latitude;\n"
+                      "sloping means the bias itself changes", fontsize=10)
 
-    print(f"\n{'latitude':>12} {'n':>5} {'median shortfall':>18}")
-    for x_, y_, n_ in zip(mids, med, n):
-        print(f"{x_-2.5:>5.0f}-{x_+2.5:<5.0f} {n_:>5} {y_:>15.0f} km")
+    print(f"\n{'latitude':>12} {'n':>5} {'ratio':>8} {'median obs':>12}")
+    for x_, r_, s_, n_ in zip(mids, ratio, speed, n):
+        print(f"{x_-2.5:>5.0f}-{x_+2.5:<5.0f} {n_:>5} {r_:>8.2f} {s_:>9.0f} km")
 
     for a in axes:
         a.grid(alpha=0.3)

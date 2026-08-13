@@ -1,0 +1,76 @@
+# Experiment A — P1 only: patch and windows re-derived for R = 40.
+#
+#   sbatch --export=ALL,FRESH=1,RUNDIR=runs/p1_wide,OVERLAY=experiments/p1_wide.yaml \
+#          job_scripts/train_h200.sh
+#
+# ── What changes, and why ───────────────────────────────────────────────
+# The current patch and both window sizes were designed for a 201-point radial
+# grid and carried over to R = 41 unexamined. On the grid they were meant for
+# they are reasonable; on this one they are not:
+#
+#                        tokens    coarse   real fine   real coarse
+#     R=201 (designed)   8x26x30   8x13x15        87%          61%
+#     R=41  (inherited)  8x6x30    8x3x15        60%          28%
+#
+# Seventy-two percent of coarse-stage attention positions hold padding, and
+# twelve of the sixteen blocks live at that stage. Worse for the reason the polar
+# grid was adopted at all, patch_r = 8 at 0.25 deg spans 2.00 deg per patch while
+# the radius of maximum wind is 0.3-0.5, so the entire eyewall falls inside one
+# patch and no amount of training can recover structure the tokenisation threw
+# away. The forecast bottoms out at 969 hPa where ERA5 reaches 934.
+#
+# R = 40 with patch_r = 4 gives ten radial tokens instead of six, a patch of
+# 1.03 deg, and 100 % real tokens at both stages. Checked with
+# tools/patch_design.py, which also builds each candidate and runs a forward pass.
+#
+# R must give an EVEN token count: DownSample reshapes to 5-D and hands that to a
+# 2-D replicate pad, which raises on an odd count. ceil(40/4) = 10 is fine;
+# ceil(41/4) = 11 is the crash. That is B8.
+#
+# ── Why the windows are not equal ───────────────────────────────────────
+# window_shape1 keeps a 10-wide radial window, so at full resolution one window
+# spans the whole radius and the inner core can attend directly to the flow it is
+# embedded in. That is the mechanism the steering diagnostic implicated: the
+# model's deep-layer steering is right while its frame follows at 55-72 % of it.
+# The coarse stage is 5 tokens, so a 5-wide window covers it exactly.
+#
+# A uniform (2,5,15) is the cheaper alternative - 0.86x against 0.91x measured
+# end to end - and splits the radius into two windows at full resolution. If this
+# run disappoints, that is the next thing to try rather than a larger change.
+#
+# ── Why max_steps is unchanged ──────────────────────────────────────────
+# It is NOT raised to spend the time saved, for two reasons.
+#
+# max_steps defines the cosine schedule, so changing it changes the learning-rate
+# trajectory as well as the architecture, and the run stops being attributable.
+# experiments/diag_C_ctrl_short.yaml documents that exact mistake being made here
+# before.
+#
+# And there is little to spend: measured forward and backward is 0.91x, not the
+# 0.74x the attention arithmetic suggests, because patch_r = 4 produces 1.67x
+# more tokens and everything outside attention scales with them.
+#
+# Dataset size and batch size are untouched, so this is the same 231 epochs over
+# the same 14,522 samples, on the same learning-rate curve, differing from the
+# baseline in the architecture alone.
+#
+# ── What to compare, and against what ───────────────────────────────────
+# Not one case. The 2024 season baseline is a median position error of 141 km at
+# +24 h and 757 km at +120 h over 81 cases; rerun tools/season_stats.py with
+# --runs pointing at both and read them on the same axes. Kong-rey alone sits well
+# outside that distribution and would mislead in either direction.
+#
+# Expected to move: intensity, which is what the patch size bears on most
+# directly. Not expected to move on its own: the speed bias, which the Cartesian
+# comparison shows is not caused by the token layout.
+
+data:
+  data_spatial_shape: [13, 40, 180]
+
+model:
+  data_spatial_shape: [13, 40, 180]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 15]
+  optimizer_args:
+    lr: 0.00005
