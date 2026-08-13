@@ -168,12 +168,9 @@ def main(args):
     if args.time:
         import time
         import torch
-        print("
-end-to-end forward + backward on CPU — the attention column "
-              "above does not
-predict this, because a smaller patch makes more "
-              "tokens and everything
-outside attention scales with them")
+        print("\nend-to-end forward + backward on CPU. The attention column "
+              "above does not\npredict it: a smaller patch makes more tokens, "
+              "and everything outside\nattention scales with them.")
         base_t = None
         for name, R, patch, w1, w2 in CANDIDATES:
             Theta = 96 if patch[2] == 4 else 180
