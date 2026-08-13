@@ -55,6 +55,15 @@ pf = st.pf
 DEG_KM = 111.32
 
 
+def km(dlon, dlat, lat):
+    """Degrees to km, with the cos(lat) factor on longitude.
+
+    steering.py keeps this inline rather than exposing it, so it is repeated
+    here rather than reached for across a module boundary that does not have it.
+    """
+    return dlon * DEG_KM * np.cos(np.deg2rad(lat)), dlat * DEG_KM
+
+
 def steering_at(field, radius_deg, levels):
     """Deep-layer mean wind over a disc of this radius, in m/s."""
     n = field.lon.shape[0]
@@ -105,7 +114,7 @@ def main(args):
             print(f"{t:%Y-%m-%d %HZ}   (no motion: needs +/-{args.dt} h)")
             continue
         lat = centres[t][1] if t in centres else b[1]
-        dx, dy = st.km(b[0] - a[0], b[1] - a[1], lat)
+        dx, dy = km(b[0] - a[0], b[1] - a[1], lat)
         dt_s = 2 * args.dt * 3600.0
         mot = (dx * 1000.0 / dt_s, dy * 1000.0 / dt_s)
 
