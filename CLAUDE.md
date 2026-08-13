@@ -212,6 +212,14 @@ file: `ccw_inward_flip`, RMSE exactly 0.0000 against 10.7 for the runner-up.
 
 **If the dataset is ever regenerated, re-run that tool.** Do not assume it carries over.
 
+Checked across the training set as well, after a forecast turned north while its own
+winds pushed south and a sign error looked plausible: 2007, 2013 and 2020, **both** the
+`vt10/vr10` surface pair and the `vt/vr` upper-air one, all `ccw_inward_flip` at 0.0000
+RMSE. The convention is uniform over fourteen years and matches inference. Combined with
+`tools/meridional_check.py` finding the transforms clean in all four cardinal directions,
+**the wind representation is not where the spurious recurvature comes from** — do not spend
+time here again without new evidence.
+
 ### 4. NaN outside the polar disc is deliberate
 
 The disc covers 76.6 % of the square frame; the corners have no model output. They are NaN
