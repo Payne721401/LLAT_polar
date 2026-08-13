@@ -29,9 +29,11 @@ everything outside attention scales with the token count. The 1.67x more tokens
 very nearly cancels the attention saving.
 
 --time measures the whole forward and backward instead. On CPU the wide-window
-candidate comes out at 0.98x and the uniform one at 0.87x, against 0.74x and
-0.47x by attention alone. Use --time, or better `job_scripts/calibrate.sh` on the
-real hardware, before setting max_steps from a throughput assumption.
+candidate lands near 0.91x and the uniform one near 0.86x, against 0.74x and
+0.47x by attention alone - so the saving is real but a third of what the FLOP
+count promises. CPU ratios are not GPU ratios either; use
+`job_scripts/calibrate.sh` on the real hardware before setting max_steps from a
+throughput assumption.
 
 The numbers are derived arithmetically and then checked against the model itself:
 --verify instantiates it, counts the blocks the analytic model assumed, and runs
