@@ -44,6 +44,7 @@ Usage
 """
 import argparse
 import math
+import os
 
 # (Z, R, Theta) of the data, and the surface field the patch embedding appends as
 # one extra vertical token.
@@ -131,6 +132,13 @@ def verify(name, R, Theta, patch, w1, w2, surface_vars=20, upper_vars=6):
 
 
 def main(args):
+    # Both --time and --verify import the model, so the repository root goes on
+    # the path once here rather than inside whichever branch happens to run.
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
     base = None
     print(f"{'design':<24} {'tokens':>12} {'coarse':>10} {'real fine':>10} "
           f"{'real coarse':>12} {'cost':>7} {'patch':>8}")
@@ -189,9 +197,6 @@ def main(args):
             print(f"  {name:<24} {dt:>6.2f} s   {dt/base_t:>5.2f}x")
 
     if args.verify:
-        import sys
-        import os
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         print("\nverifying on CPU — instantiate, count blocks, forward")
         for name, R, patch, w1, w2 in CANDIDATES:
             Theta = 96 if patch[2] == 4 else 180
