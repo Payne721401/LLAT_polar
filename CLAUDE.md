@@ -282,6 +282,20 @@ A test that cannot fail proves nothing. Twice a test here passed while measuring
 
 When adding a test for a fix, restore the defect and confirm the test goes red.
 
+### Resuming was never exercised until it had to be
+
+`train_h200.sh` resumes from `last.ckpt` whenever `FRESH` is unset, and that path
+had never run: every training so far either started fresh or finished. The first
+job that needed to continue died in twenty-six seconds, because LightningCLI reads
+the checkpoint with `torch.load(weights_only=True)` to resolve the config, and
+PyTorch 2.4+ refuses the numpy scalars a Lightning checkpoint stores as logged
+metrics. `train.py` now allowlists them; the general point is that a code path
+nothing has run is not a working code path, however plainly the script advertises it.
+
+Checkpoints are also 305 MB each and `save_top_k` defaulted to 30, which is 9.2 GB
+per run. Set `SAVE_TOP_K=5` on the `sbatch` line. A run that fills the quota dies
+mid-write with a truncated file and an exception that says nothing about disks.
+
 ### The cluster job script is driven by environment variables
 
 `OVERLAY`, `RUNDIR`, `FRESH` — never edit `job_scripts/train_h200.sh` for an experiment. An

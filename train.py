@@ -43,7 +43,52 @@ class ElapsedTimeCallback(Callback):
         pl_module.log("elapsed_time_hours", hours, logger=False)
 
 
+def allow_numpy_scalars_in_checkpoints():
+    """Let a resume actually load the checkpoint it is resuming from.
+
+    LightningCLI reads the checkpoint before training starts, to resolve the
+    config, and does it with `torch.load(..., weights_only=True)`. Since PyTorch
+    2.4 that refuses anything not on an allowlist, and a Lightning checkpoint
+    contains numpy scalars - the logged metrics, `val_loss` among them - so the
+    load raises `UnpicklingError: Unsupported global: numpy._core.multiarray.
+    scalar` and the job dies in twenty-six seconds.
+
+    This only ever bites on resume. A fresh run writes checkpoints happily and
+    never reads one back, which is why the path went unexercised until a job had
+    to be continued.
+
+    The module moved from `numpy.core` to `numpy._core` in numpy 2, so both are
+    tried. `dtype` and the float dtypes usually come up next once the scalar is
+    allowed, so they are added in the same pass rather than one failed job at a
+    time. Allowlisting is narrower than TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1, which
+    would disable the check for every load in the process.
+    """
+    import numpy as np
+
+    wanted = []
+    for path in ("_core.multiarray.scalar", "core.multiarray.scalar"):
+        obj = np
+        try:
+            for part in path.split("."):
+                obj = getattr(obj, part)
+        except AttributeError:
+            continue
+        wanted.append(obj)
+    for name in ("dtype",):
+        wanted.append(getattr(np, name))
+    for name in ("Float64DType", "Float32DType", "Int64DType"):
+        dt = getattr(getattr(np, "dtypes", None), name, None)
+        if dt is not None:
+            wanted.append(dt)
+
+    add = getattr(torch.serialization, "add_safe_globals", None)
+    if add is not None and wanted:
+        add(list(dict.fromkeys(wanted)))
+
+
 def main():
+    allow_numpy_scalars_in_checkpoints()
+
     # A checkpoint here is 305 MB - 24.1 M parameters plus two Adam moments - and
     # one is written every epoch, which at 455 steps is under two minutes. Keeping
     # thirty of them is 9.2 GB per run, and a run that fills the quota dies
