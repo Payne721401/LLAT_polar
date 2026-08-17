@@ -41,6 +41,19 @@ read as the environment being adequately represented, but **a correct mean says 
 about the radial structure of the flow** - which 6 radial tokens, 3 after downsampling and
 72 % padding, cannot hold. Seeing the steering and acting on it are different things.
 
+**What P1 actually did to the track: it lowered the model's willingness to turn north.**
+Its three worst cases are the mirror image of the three it fixed. 202414W twice and 202422W
+are storms that should NOT have recurved and the baseline turned them north; P1 fixed all
+three, 202422W completely (1989 -> 444 km). 202419W and 202417W are storms that SHOULD have
+recurved sharply - ERA5 takes them to 48.8 N and 42.0 N - and P1 under-turns them worse than
+the baseline (2517 against 1419, 2163 against 1701), with the error almost entirely
+along-track. 202416W should have slowed and P1 overshot further east.
+
+So it traded false recurvatures for missed ones. That is a shifted bias, not added skill,
+and it is why the season median is a wash while individual cases move by factors of three.
+Any future change should be judged this way - which direction of error it trades for which -
+rather than on a median that averages the two together.
+
 So P1 bought a large, mechanism-backed intensity gain at no net track cost, and is not the
 track fix. The polar-specific spurious recurvature stays the open question: P1 changed which
 storms it happens to, not whether it happens.
