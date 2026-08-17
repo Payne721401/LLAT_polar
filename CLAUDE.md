@@ -9,99 +9,60 @@ Read the "Invariants" section before changing anything under `DLAMPty_inference.
 
 ---
 
-## Current status — 2026-08-11
+## Current status - 2026-08-17
 
-Keep this block short and current. It is the first thing an agent reads, so it should
-answer "where is this project" in ten lines, not narrate history. Detail belongs in dated
-notes under `analysis/`; what was *done* belongs in the git log.
+Keep this block short and current. It is the first thing an agent reads. Detail belongs in
+dated notes under `analysis/` - which is **gitignored**, so those exist only on the machine
+that wrote them; anything that must survive a clone belongs here or in a commit message.
 
-**`analysis/` is untracked** — reports, figures and exported curves are outputs and are
-gitignored. So a dated note referenced here exists only on the machine that wrote it, and
-anything that must survive a fresh clone belongs in this block or in a commit message.
+**Two models trained, same steps and schedule, geometry the only difference.**
 
-**Works.** Training (val loss 0.24997, bf16 + LR 5e-5). ONNX export with verification.
-All three forecast modes to +240 h — a 10-day one-way forecast takes about a minute, so
-whole-season experiments are cheap. Five diagnostics: comparison figure, radial profile,
-track error with map, steering flow, vortex centre.
+| | grid | val loss |
+|---|---|---|
+| `LLAT_polar_vtvr_v1` | R=41, patch (2,8,6), windows (2,10,15)/(2,8,10) | 0.24997 |
+| **`LLAT_polar_p1_v1`** | **R=40, patch (2,4,6), windows (2,10,15)/(2,5,15)** | **0.24555** |
 
-**The track error is diagnosed.** See `analysis/2026-08-11_track_error_diagnosed.md`.
-`val_RMSE/lon` is 0.774° and `val_RMSE/lat` 0.554°, a **102 km position error for one 3 h
-step** against the 104 km the storm covers in it; as a random walk that is 288 km at 24 h
-and the observed error was 296 km. The model's own steering flow is right (identical at
-hour 0 by construction) but its frame moves at **55–72 %** of what that flow implies, and
-the vortex does not drift to compensate (median 30 km from the array centre over 240 h).
-The two channels that carry the whole track are **0.43 %** of the objective.
+P1 is 1.8 % better and **not yet exported**. That is the next action: export, run the
+season, compare against the baseline's median 141 km at +24 h and 757 km at +120 h over 27
+cases of 2024. Written-down predictions: intensity should move off 969 hPa toward ERA5's
+934; the speed deficit should not improve on its own; the spurious recurvature probably
+will not be fixed.
 
-**Blocked on nothing.**
+**Two failure modes, different causes, do not conflate them.**
 
-**Rescaling works, and shows its own limits.** `--frame-speed-scale 1.45` beats 1.0 at all
-32 leads — 24 h goes 296 → 99 km, 6 h goes 104 → 45. But no single factor is best
-everywhere (1.2 at 36–48 h, 1.7 beyond 96 h), the deficit grows with lead because the model
-does not follow the storm's acceleration through recurvature, and rescaling makes
-cross-track worse where it is already worst. Backed out of those numbers the per-step centre
-error is **49 km** — 35 systematic, 35 random — against persistence's 68, so the model does
-beat persistence; `val_RMSE`'s 102 km is a field RMSE and half of it never reaches the
-centre.
+*The speed deficit* is the season median. Multiplicative at **0.78x** over 1276 intervals,
+worst (0.68) in the 25-30 N recurvature band. It is the coordinate channels: `val_RMSE/lon`
+0.774° and `val_RMSE/lat` 0.554° is **102 km for one 3 h step** against 104 km of storm
+motion, which as a random walk gives 288 km at 24 h where 296 was observed. Those two
+channels are **0.43 %** of the objective. `--frame-speed-scale 1.45` beats 1.0 at all 32
+leads (24 h: 296 → 99 km) but no one factor wins everywhere.
 
-**The Cartesian model beats the polar one on both goals, on the same case.** 202421W from
-2024-10-27 00Z, v57_5d against the polar model: position error 67 km against 249 at +24 h,
-71 against 544 at +72 h, 252 against 745 at +120 h — **3 to 8 times better**. Its along-track
-error even goes positive around +42 h, so it has no systematic slow bias at all, while the
-polar model's runs monotonically to −795 km. Deepest MSLP 954 hPa against 969, with ERA5 at
-934. **The slow bias is not inherited from the framework; the polar reformulation introduced
-it**, which kills the earlier reading that a 0.43 % objective weight explains it — that
-weight is identical in both.
+*Spurious northward recurvature* is the season tail and is **polar-specific and
+unexplained**. The three worst cases all turn north while the storm goes west; the Cartesian
+v57_5d on the same cases is 3-6x better and turns the right way. This is the most
+interesting open question.
 
-**But this is not a controlled comparison and must not be quoted as one.** The paper trained
-v57_5d for 7 days on 8 A100s; the polar model had 6.7 h on 8 H200s, of the order of **an
-eighth of the compute**, on different data (vt/vr), a different wind representation, a
-different patch/window, and different hyperparameters. What would separate architecture from
-budget: train the polar model far longer and see whether the gap closes. Against that, the
-run was already 231 epochs with a 15.2 % train/val gap, so more steps may buy memorisation
-rather than skill — which is itself the thing to find out.
+**Ruled out - do not revisit without new evidence.** The lateral boundary; domain size (the
+steering that best predicts motion is at 4°, well inside the 10° disc); vortex drift (30 km
+median over 240 h); the outer-ring artefact; best-track provenance (bounded at ~30 km);
+the vt/vr convention (0.0000 RMSE across 2007/2013/2020, both pairs); a transform sign error
+(all four directions survive to 0.00); an inverted meridional coupling (one case, three
+refute it); and **B3**, where cell-centred rings measured *worse* than the degenerate r=0
+ring, which spends 179 duplicate samples to capture the centre exactly.
 
-**Intensity is worse than the track.** The forecast bottoms out at 969 hPa where ERA5, its
-own training target, reaches 934 — and it never peaks or fills, while ERA5 does both. `patch_r
-= 8` spans 2° against a 0.3–0.5° radius of maximum wind, so the eyewall is inside one patch
-and the structure simply cannot be represented. **P1 is now the top priority**, on the
-quantity the polar grid was adopted to improve. Read intensity only where the track is still
-good: past +72 h the storms are in different places.
+**A method worth reusing.** Anything that is only a change of representation - a grid, an
+interpolation, a sampling - can be tested before training, because no learning is involved.
+The B3 round-trip took a second and stopped a 7-hour retrain aimed at making things worse.
 
-**Two more initial times.** A stronger initial vortex is worth 16 % at +24 h (296 → 249 km),
-not the 30 % the paper's intensity split suggested. And the speed deficit is not a fraction:
-the shortfall over 24 h is 317 km on one case and 249 km on another whose ratios are 62 % and
-27 %, so it behaves more like a fixed distance. A multiplicative correction is the wrong
-shape.
+**After P1, in order.** (1) If the recurvature survives: train polar on **u/v** instead of
+vt/vr - the last structural difference from the Cartesian model, and a uniform flow is two
+constants in Cartesian but a wavenumber-1 phase in θ in polar. (2) `residual` masked to
+lon/lat, and `surface_var_weights`; with a residual connection persistence becomes the
+model's floor, which it currently is not. (3) Rollout fine-tuning.
 
-**Next, in order.** (1) **P1** — patch and windows for R = 41; cheaper *and* the intensity
-fix. (2) `residual: true` masked to lon/lat, and `surface_var_weights`; with a residual
-connection persistence becomes the model's floor, which it currently is not. (3) B3,
-`r_min = Δr/2`, which lives in the same place as P1 and must change in training and
-inference together.
-
-**Dead hypotheses, do not revisit without new evidence.** The lateral boundary (one-way and
-standalone agree to +96 h). The environment representation, i.e. P1 as a *track* problem
-(the steering flow is right). Vortex drift (there is none). The outer-ring artefact (truth
-shows the same rise). Best-track provenance (inference is JMA, training was JTWC per the
-paper and confirmed by the 170 kt training filenames, but vortex-to-vortex agrees with
-frame-to-frame, bounding it at ~30 km). B9, the driver's coordinate-corner patch: measured
-latent, lon channel NaN is 0.00 % because uniformize_lonlat rebuilds both ramps.
-(It was first written up as B8; B8 was already taken by the GetPad2D 5D-replicate
-limit recorded in config.yaml, so the coordinate-corner defect is B9. Commit
-messages fac4d91 and 589cf9c predate the correction.)
-
-**202421W at 2024-10-25 00Z is a 35 kt, 998 hPa storm.** `wind_min` and `vort850` both
-mislocate it at hour 0, on an ERA5 analysis. Use `mslp`. The paper's Fig. 4b uses the same
-storm 12 h later, so it is not a like-for-like comparison, and the paper reports ~30 %
-larger track errors for weak samples.
-
-**Recently learned, worth not relearning.** NaN outside the polar disc is not inert: the
-rim of `latlon_to_polar` interpolates bilinearly and reaches across it, so 23.4 % NaN
-corners become 2.9 % of the polar array, and one NaN makes the entire model output NaN
-because attention mixes every token. Corners must be refilled after *every* step. The
-symptom appeared two stages downstream, in `lonlat_uniformizer` and then `xarray_regrid`,
-and the first diagnosis from that traceback was wrong — the guard now in
-`predict_one_step`, which names the offending channels, is what corrected it.
+**This model is data-limited**: 14,522 samples, 24.6 M parameters, 231 epochs, a 15.2 %
+train/val gap. More resolution can buy memorisation as easily as skill - which is why every
+claim gets checked against a season and not a case.
 
 ---
 

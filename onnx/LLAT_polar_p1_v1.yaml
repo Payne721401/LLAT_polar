@@ -22,11 +22,9 @@ surface_vars: ['vt10', 'vr10', 't2m', 'd2m', 'msl', 'sp', 'tcwv', 'tp', 'mtnlwrf
 pressure_levels: [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
 ingest_space_info: True
 
-# Tangential/radial wind, in the sense measured by tools/verify_vtvr_convention.py
-# against the training files rather than assumed: ccw_inward_flip, 0.0000 RMSE,
-# checked on 2007, 2013 and 2020 and on both the surface and upper-air pairs.
-wind_representation: vt_vr
-wind_convention: ccw_inward_flip
+upper_units: ["m/s", "m/s", "K", "kg kg**-1", "m**2 s**-2", "Pa s**-1"]
+surface_units: ["m/s", "m/s", "K", "K", "Pa", "Pa", "kg m**-2", "m", 'W m**-2',
+                'K', '1/s', 'W m**-2', 'm', '1', '1', '1', '1', '1']
 
 polar:
   # (Z, R, Theta). R is 40, not the baseline's 41: ceil(R/patch_r) has to be even
@@ -38,6 +36,16 @@ polar:
   # 40 rings over 40 px is dr = 1.03 px, against the baseline's 41 over 40.
   r_degree_max: 10
   original_resolution: 0.25
+  # These two live inside `polar:` because that is where DLAMPty_inference reads
+  # them. Written at the top level in the first draft, where nothing would have
+  # found them - caught by diffing this card against the working one before it
+  # was ever used, which is the only reason to write that comparison down.
+  #
+  # The sense is measured, not assumed: tools/verify_vtvr_convention.py against
+  # the training files gives ccw_inward_flip at 0.0000 RMSE on 2007, 2013 and
+  # 2020, for both the surface and the upper-air pair.
+  wind_representation: vt_vr
+  wind_convention: ccw_inward_flip
 
 stat_mean_file: utils/stat_mean_vtvr.nc
 stat_std_file: utils/stat_std_vtvr.nc
