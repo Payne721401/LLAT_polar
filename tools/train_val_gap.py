@@ -221,33 +221,44 @@ def report(run_dir, args):
     tail = [r for r in rows if r[0] >= args.converged * max(val)]
     if len(tail) >= 4:
         half = len(tail) // 2
-        early = sum(r[3] for r in tail[:half]) / half
-        late = sum(r[3] for r in tail[half:]) / (len(tail) - half)
-        print(f"\n  over the last {100 * (1 - args.converged):.0f}% of training:"
-              f" gap {early:.1f}% -> {late:.1f}%", end="  ")
-        if late > early + 1.0:
-            print("OPENING")
-            print("  The run is fitting the training set harder without gaining")
-            print("  on validation. More steps make that worse, not better.")
-        elif late < early - 1.0:
-            print("still closing")
-            print("  More steps may pay - but check the schedule first, since a")
-            print("  cosine that has already reached zero cannot use them.")
-        else:
-            print("flat")
-            print("  Not overfitting. Whether more steps would help is a")
-            print("  question about the learning-rate schedule, not this gap.")
-
-        # The gap is a ratio and can sit still while both curves drift. What
-        # actually defines overfitting is validation loss turning upward.
+        g_early = sum(r[3] for r in tail[:half]) / half
+        g_late = sum(r[3] for r in tail[half:]) / (len(tail) - half)
         v_early = sum(r[2] for r in tail[:half]) / half
         v_late = sum(r[2] for r in tail[half:]) / (len(tail) - half)
         drift = 100.0 * (v_late - v_early) / v_early
-        print(f"  validation itself: {v_early:.5f} -> {v_late:.5f}"
-              f" ({drift:+.2f}%)", end="  ")
-        print("rising - past the useful point." if drift > 0.25 else
-              "still falling." if drift < -0.25 else
-              "flat: converged, not overfitting.")
+
+        span = 100 * (1 - args.converged)
+        print(f"\n  over the last {span:.0f}% of training")
+        print(f"    gap        {g_early:>8.1f}% -> {g_late:>8.1f}%")
+        print(f"    validation {v_early:>9.5f} -> {v_late:>9.5f}  ({drift:+.2f}%)")
+        print("  ", end="")
+
+        # VALIDATION DECIDES, not the gap. A second wrong verdict came from
+        # reading the gap on its own: both production runs widened their gap
+        # over the final half - the baseline 12.6 % to 14.9 % - and were called
+        # overfitting, while validation was still FALLING 1 % over the same
+        # span. A model fitting everything better, training faster than
+        # validation, widens the gap and is learning, not memorising.
+        #
+        # Overfitting is validation getting worse. The gap only qualifies the
+        # answer once validation has stopped improving.
+        if drift < -0.1:
+            print("STILL IMPROVING: validation is falling. Not overfitting,")
+            print("  whatever the gap does - a widening gap here just means the")
+            print("  training set improves faster, which is what fitting looks")
+            print("  like. Stopping early would leave something on the table.")
+        elif drift > 0.25:
+            print("OVERFITTING: validation has turned upward. This is past the")
+            print("  useful point; the best checkpoint is behind the last one.")
+        elif g_late > g_early + 1.0:
+            print("CONVERGED, and the gap is still widening: the run is buying")
+            print("  training fit that validation does not see. More steps of")
+            print("  the same would not pay.")
+        else:
+            print("CONVERGED: validation and the gap are both flat. Whether more")
+            print("  steps would help is a question about the learning-rate")
+            print("  schedule - a cosine that reached zero cannot use them -")
+            print("  rather than about capacity.")
 
     if args.csv:
         os.makedirs(os.path.dirname(os.path.abspath(args.csv)) or ".",
@@ -303,8 +314,11 @@ if __name__ == "__main__":
                    help="run directories, e.g. runs/prod_lr5e-5 runs/p1_wide")
     p.add_argument("--tail", type=int, default=6,
                    help="how many of the final epochs to print")
-    p.add_argument("--converged", type=float, default=0.5,
+    p.add_argument("--converged", type=float, default=0.9,
                    help="fraction of training to discard before judging the "
-                        "trend; the early gap is negative and swamps everything")
+                        "trend. The early gap is negative and swamps any window "
+                        "containing it, and even the last half still spans a lot "
+                        "of ordinary learning; 0.9 looks at the plateau, which "
+                        "is where the question is actually asked")
     p.add_argument("--csv", help="write the merged per-epoch curves here")
     main(p.parse_args())

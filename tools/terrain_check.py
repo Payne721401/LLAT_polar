@@ -149,10 +149,27 @@ def main(args):
     series, land_pts = {}, []
 
     for label, path in runs:
+        # An unset shell variable in --run makes an absolute path that begins
+        # at the root, and every step downstream degrades quietly: read_meta
+        # only warns, available_leads returns nothing, the table prints its
+        # header and no rows, and the first thing to actually raise is a min()
+        # over an empty sequence six frames away. Say it here instead.
+        if not os.path.isdir(path):
+            raise SystemExit(
+                f"no such directory: {path}\n"
+                f"If that begins with a stray '/', a shell variable in --run was "
+                f"unset - `R=$HOME/scratch/season/p1` has to be set in the same "
+                f"shell as the command that uses it.")
         meta = pf.read_meta(path)
         leads = pf.available_leads(path)
         if args.max_lead is not None:
             leads = [h for h in leads if h <= args.max_lead]
+        if not leads:
+            raise SystemExit(
+                f"{path} exists but holds no output_sfc_*h.npy under "
+                f"{os.path.relpath(pf.forecast_dir(path), path)}. Either the "
+                f"forecast has not been run, or this is the wrong level of the "
+                f"directory tree.")
         rows = {}
         for h in leads:
             f = pf.load_run(path, h, meta)
