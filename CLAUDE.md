@@ -22,11 +22,28 @@ that wrote them; anything that must survive a clone belongs here or in a commit 
 | `LLAT_polar_vtvr_v1` | R=41, patch (2,8,6), windows (2,10,15)/(2,8,10) | 0.24997 |
 | **`LLAT_polar_p1_v1`** | **R=40, patch (2,4,6), windows (2,10,15)/(2,5,15)** | **0.24555** |
 
-P1 is 1.8 % better and **not yet exported**. That is the next action: export, run the
-season, compare against the baseline's median 141 km at +24 h and 757 km at +120 h over 27
-cases of 2024. Written-down predictions: intensity should move off 969 hPa toward ERA5's
-934; the speed deficit should not improve on its own; the spurious recurvature probably
-will not be fixed.
+**P1 is measured**, on the 81 initial times both runs have.
+
+*Intensity: confirmed, decisively.* 202421W from 2024102700 reaches **931.7 hPa** against
+the baseline's 969.4 and ERA5's 934.2 - the baseline was 35 hPa short of its own training
+target and P1 matches it. The life cycle is still wrong (monotonic deepening, peak 54 h
+late, no decay), and past +72 h the track error puts the storms in different environments,
+so read intensity only where the track holds.
+
+*Track: no net change.* 24 h 141 -> 140 km, 48 h 269 -> 242 (-10 %), 96 h 567 -> 712
+(+26 %), 120 h 757 -> 746. The worst cases are different storms and P1's worst is larger.
+It moved the error around.
+
+*One prediction failed.* Spurious recurvature was predicted not to improve; on 202414W
+2024091600 it went 2207 -> 772 km, and then the season showed the win did not generalise.
+The reasoning that broke: `steering.py` had the 500 km areal-mean steering matching ERA5,
+read as the environment being adequately represented, but **a correct mean says nothing
+about the radial structure of the flow** - which 6 radial tokens, 3 after downsampling and
+72 % padding, cannot hold. Seeing the steering and acting on it are different things.
+
+So P1 bought a large, mechanism-backed intensity gain at no net track cost, and is not the
+track fix. The polar-specific spurious recurvature stays the open question: P1 changed which
+storms it happens to, not whether it happens.
 
 **Two failure modes, different causes, do not conflate them.**
 
