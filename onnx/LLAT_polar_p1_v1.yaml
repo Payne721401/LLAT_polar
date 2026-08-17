@@ -1,0 +1,47 @@
+# Model card for the P1 geometry: patch and windows re-derived for R = 40.
+#
+# Differs from LLAT_polar_vtvr_v1 in the grid and nothing else. Same data, same
+# vt/vr wind, same bf16 and 5e-5, same 105,000 steps and therefore the same
+# cosine schedule - so a comparison between the two attributes to the geometry.
+#
+#   baseline  R = 41, patch (2,8,6), windows (2,10,15)/(2,8,10)   val 0.24997
+#   this      R = 40, patch (2,4,6), windows (2,10,15)/(2,5,15)   val 0.24555
+#
+# The token grid goes from 8x6x30 to 8x10x30, padding at the coarse stage from
+# 72 % to none, and one radial patch from 2.00 to 1.03 degrees against a radius
+# of maximum wind of 0.3-0.5. Whether that buys the intensity it was meant to is
+# a question for tools/intensity.py, not for the validation loss: the loss is an
+# unweighted mean over 98 channels and the eyewall is a small part of it.
+onnx_version: LLAT_polar_p1_v1
+onnx_path: onnx/LLAT_polar_p1_v1.onnx
+
+upper_vars: ['vt', 'vr', 't', 'q', 'z', 'w']
+surface_vars: ['vt10', 'vr10', 't2m', 'd2m', 'msl', 'sp', 'tcwv', 'tp', 'mtnlwrf',
+               'sst_filled', 'f', 'solar', 'hgt', 'landmask',
+               'diurnal_sin', 'diurnal_cos', 'doy_sin', 'doy_cos']
+pressure_levels: [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
+ingest_space_info: True
+
+# Tangential/radial wind, in the sense measured by tools/verify_vtvr_convention.py
+# against the training files rather than assumed: ccw_inward_flip, 0.0000 RMSE,
+# checked on 2007, 2013 and 2020 and on both the surface and upper-air pairs.
+wind_representation: vt_vr
+wind_convention: ccw_inward_flip
+
+polar:
+  # (Z, R, Theta). R is 40, not the baseline's 41: ceil(R/patch_r) has to be even
+  # or DownSample hands a 5-D tensor to a 2-D replicate pad and raises. 40/4 = 10
+  # is legal, 41/4 = 11 is the crash. See tools/patch_design.py.
+  data_spatial_shape: [13, 40, 180]
+  # Unchanged from the baseline, so the disc covers the same ground and the
+  # 81x81 Cartesian frame is the same. Only the sampling within it differs:
+  # 40 rings over 40 px is dr = 1.03 px, against the baseline's 41 over 40.
+  r_degree_max: 10
+  original_resolution: 0.25
+
+stat_mean_file: utils/stat_mean_vtvr.nc
+stat_std_file: utils/stat_std_vtvr.nc
+stat_mean_upper_file:
+stat_std_upper_file:
+stat_mean_sfc_file:
+stat_std_sfc_file:
