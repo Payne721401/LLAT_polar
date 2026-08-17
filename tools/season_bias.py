@@ -167,7 +167,8 @@ if __name__ == "__main__":
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--runs", required=True)
     p.add_argument("--era5-root", required=True)
-    p.add_argument("--version", default="LLAT_polar_vtvr_v1")
+    p.add_argument("--version", default=None,
+                   help="restrict to one model version; any is taken by default")
     p.add_argument("--mode", default="one-way",
                    choices=["one-way", "two-way", "standalone"])
     p.add_argument("--window", type=int, default=24,

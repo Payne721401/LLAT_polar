@@ -75,15 +75,21 @@ def forecast_centre(run_dir, lead, meta):
     return float(np.nanmean(lon)), float(np.nanmean(lat)), sfc.shape[0]
 
 
-MODE_DIR = {'one-way': 'one_way_couple_model_{v}',
-            'two-way': '2_way_circle_couple_model_{v}',
-            'standalone': 'standalone_{v}'}
+# Prefix only. The model version is part of the directory name, and --version is
+# a single flag for every --runs, so requiring an exact match made the one thing
+# this tool exists for - a retrained model against its baseline - impossible:
+# the two live under different version directories by construction. Globbing the
+# prefix finds whichever is there, and the resolved name is printed so a wrong
+# directory is visible rather than silently empty.
+MODE_DIR = {'one-way': 'one_way_couple_model_*',
+            'two-way': '2_way_circle_couple_model_*',
+            'standalone': 'standalone_*'}
 
 
 def find_starts(root, version, mode):
     """Every (tc_id, init) a sweep produced, from the directory layout alone."""
-    pattern = os.path.join(os.path.expanduser(root), '*',
-                           MODE_DIR[mode].format(v=version), 'start_from_*')
+    sub = MODE_DIR[mode] if not version else MODE_DIR[mode].replace('*', version)
+    pattern = os.path.join(os.path.expanduser(root), '*', sub, 'start_from_*')
     out = []
     for p in sorted(glob.glob(pattern)):
         m = re.search(r'start_from_(\d{10})$', p)
@@ -171,6 +177,9 @@ def main(args):
     for name, root in runs:
         by_lead, n_cases, skipped, per_case = collect(
             root, args.era5_root, args.version, args.mode, args.limit)
+        seen = sorted({p.split(os.sep)[-2] for _, _, p, _ in per_case})
+        print(f"  {name}: {n_cases} cases under {', '.join(seen) or '(none)'}",
+              flush=True)
         if not by_lead:
             raise SystemExit(f"{name}: no cases with truth under {root}")
 
@@ -230,7 +239,10 @@ if __name__ == "__main__":
     p.add_argument("--runs", action="append", required=True, metavar="[NAME=]PATH")
     p.add_argument("--era5-root", required=True,
                    help="the directory holding {TC_ID}/ERA5/for_DLAMPty")
-    p.add_argument("--version", default="LLAT_polar_vtvr_v1")
+    p.add_argument("--version", default=None,
+                   help="restrict to one model version; by default any version "
+                        "directory under --runs is taken, which is what lets a "
+                        "retrained model be compared against its baseline")
     p.add_argument("--mode", default="one-way",
                    choices=["one-way", "two-way", "standalone"])
     p.add_argument("--limit", type=int, default=0, help="first N cases, for a smoke test")
