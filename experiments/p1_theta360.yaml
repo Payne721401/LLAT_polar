@@ -1,0 +1,83 @@
+# Experiment B - azimuthal resolution: 2 degrees of theta per column, not 4.
+#
+#   sbatch --export=ALL,FRESH=1,RUNDIR=runs/p1_theta360,OVERLAY=experiments/p1_theta360.yaml \
+#          job_scripts/train_h200.sh
+#
+# Built on P1, changing Theta from 180 to 360 and nothing else. P1's own change -
+# R = 40 with patch_r = 4 - is kept, so this is P1 plus azimuthal density and a
+# comparison against runs/p1_wide attributes to that alone.
+#
+# ── The sampling argument, which is real but only at the rim ────────────
+# Theta = 180 puts a column every 2 degrees of azimuth. Converted to distance
+# that is a spacing which grows linearly with radius:
+#
+#     radius    arc between columns    against a 0.25 deg source
+#      1 deg           0.035 deg       7x finer  - pure interpolation
+#      5 deg           0.175 deg       1.4x finer
+#     10 deg           0.349 deg       1.4x COARSER  - undersampled
+#
+# So the outer disc is sampled more coarsely than the data it is drawn from, and
+# the inner disc is sampled far more finely than the data supports. Theta = 360
+# halves both: the rim reaches 0.175 deg, comfortably inside the source spacing,
+# at the cost of oversampling the core by 14x rather than 7x.
+#
+# Matching the source exactly would want Theta = 251, and 256 would be the round
+# number. It is not reachable here: ceil(256/6) = 43 theta tokens, which is odd,
+# and DownSample raises on an odd count (B8, see tools/patch_design.py). Using it
+# would mean changing patch_theta as well, and then the run is no longer
+# attributable to azimuthal density. 360 divides cleanly - ceil(360/6) = 60,
+# even, and 60/15 = 4 windows at full resolution against 30/15 = 2 at the coarse
+# stage, both exact, so nothing is padded at either stage. The requested grid is
+# also the mechanically clean one.
+#
+# ── What it costs ───────────────────────────────────────────────────────
+#     P1        8 x 10 x 30 tokens = 2,400
+#     this      8 x 10 x 60 tokens = 4,800
+#
+# Twice the tokens. Attention within a window is unchanged - the window is still
+# 15 theta-tokens wide - so the cost scales with the token count rather than its
+# square, but everything outside attention scales with it too. Expect close to 2x
+# wall clock per step and roughly 2x activation memory; if it does not fit,
+# lowering the batch size changes the effective learning rate and breaks
+# attribution, so prefer activation checkpointing or bf16 over a smaller batch.
+#
+# ── The reservation, recorded because it should be tested not assumed ───
+# The baseline finished with a 15.2 % train/val gap on 14,522 samples for 24.1 M
+# parameters, which is a model closer to data-limited than to capacity-limited.
+# Doubling the token count adds capacity, and capacity added to a data-limited
+# model buys memorisation before it buys skill. Run tools/train_val_gap.py on
+# runs/p1_wide before this one and read the gap: if it is already opening, this
+# grid needs augmentation or more data more than it needs resolution.
+#
+# The second reservation is that azimuthal density is not aimed at the open
+# problem. What P1 showed is that the model's willingness to turn north is moved
+# by RADIAL resolution - it traded three false recurvatures for three missed
+# ones. Theta is the other axis, and there is no measurement yet saying it bears
+# on that. This run is worth doing for the rim sampling and as a capacity probe;
+# it is not the fix for the track bias, and should not be judged as one.
+#
+# ── What to compare ─────────────────────────────────────────────────────
+# Against runs/p1_wide, on the same 81 paired 2024 cases through
+# tools/season_stats.py, and case by case in the direction P1 moved: does the
+# model recover the recurvatures P1 lost (202419W 2024100700, 202417W
+# 2024092700) without giving back the ones P1 fixed (202414W, 202422W)? A median
+# that does not move can still be two large opposite changes cancelling, which is
+# exactly what P1's median did.
+#
+# max_steps is unchanged for the same reason as in p1_wide.yaml: it defines the
+# cosine schedule, and changing it changes the learning-rate trajectory as well
+# as the architecture.
+
+data:
+  data_spatial_shape: [13, 40, 360]
+
+model:
+  data_spatial_shape: [13, 40, 360]
+  # Unchanged from P1. patch_theta = 6 now spans 2 degrees of azimuth instead of
+  # 4, which is the whole point; the token count per window is what is held
+  # fixed, not the ground each token covers.
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 15]
+  optimizer_args:
+    lr: 0.00005
