@@ -85,6 +85,12 @@ MODE_DIR = {'one-way': 'one_way_couple_model_*',
             'two-way': '2_way_circle_couple_model_*',
             'standalone': 'standalone_*'}
 
+# Directories the prefix glob would sweep in but which are separate experiments.
+# `_scale1.45` and friends are --frame-speed-scale runs: the same model with the
+# frame displacement multiplied, so counting them as the baseline mixes a
+# post-processed forecast into the thing it was measured against.
+EXCLUDE = ('_scale',)
+
 
 def find_starts(root, version, mode):
     """Every (tc_id, init) a sweep produced, from the directory layout alone."""
@@ -93,9 +99,9 @@ def find_starts(root, version, mode):
     out = []
     for p in sorted(glob.glob(pattern)):
         m = re.search(r'start_from_(\d{10})$', p)
-        tc = p.split(os.sep)[-3]
-        if m:
-            out.append((tc, m.group(1), p))
+        if not m or any(x in p.split(os.sep)[-2] for x in EXCLUDE):
+            continue
+        out.append((p.split(os.sep)[-3], m.group(1), p))
     return out
 
 
@@ -117,10 +123,12 @@ def errors_for(run_dir, era5_dir, tc_id, init_str):
     return out
 
 
-def collect(root, era5_root, version, mode, limit=0):
+def collect(root, era5_root, version, mode, limit=0, keep=None):
     """Every case's error curve, keyed by lead, plus the per-case curves."""
     by_lead, per_case, cases, skipped = {}, [], 0, []
     starts = find_starts(root, version, mode)
+    if keep is not None:
+        starts = [s for s in starts if (s[0], s[1]) in keep]
     if limit:
         starts = starts[:limit]
     for tc, init, path in starts:
@@ -174,9 +182,21 @@ def main(args):
     runs = [r.split('=', 1) if '=' in r else (args.mode, r) for r in args.runs]
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
 
+    # Restrict every run to the cases they all have. A median over 86 cases and a
+    # median over 82 different ones differ for two reasons at once, and the one
+    # being asked about is not separable from the other.
+    keep = None
+    if len(runs) > 1 and not args.unpaired:
+        for _, root in runs:
+            ids = {(tc, init) for tc, init, _ in
+                   find_starts(root, args.version, args.mode)}
+            keep = ids if keep is None else (keep & ids)
+        print(f"comparing on the {len(keep)} initial times every run has; "
+              f"pass --unpaired to use each run's full set", flush=True)
+
     for name, root in runs:
         by_lead, n_cases, skipped, per_case = collect(
-            root, args.era5_root, args.version, args.mode, args.limit)
+            root, args.era5_root, args.version, args.mode, args.limit, keep)
         seen = sorted({p.split(os.sep)[-2] for _, _, p, _ in per_case})
         print(f"  {name}: {n_cases} cases under {', '.join(seen) or '(none)'}",
               flush=True)
@@ -246,6 +266,9 @@ if __name__ == "__main__":
     p.add_argument("--mode", default="one-way",
                    choices=["one-way", "two-way", "standalone"])
     p.add_argument("--limit", type=int, default=0, help="first N cases, for a smoke test")
+    p.add_argument("--unpaired", action="store_true",
+                   help="let each run use its own case set instead of the "
+                        "intersection; the medians then differ for two reasons")
     p.add_argument("--worst", type=int, default=0,
                    help="also name the N worst cases, each with the command "
                         "that plots it")
