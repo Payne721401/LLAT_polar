@@ -207,17 +207,47 @@ def report(run_dir, args):
     print(f"\n  gap at best val: {final[3]:.1f}%"
           f"   (baseline R=41 was 15.2%)")
 
-    # Is the gap opening? Compare the first and last thirds of the run.
-    third = max(1, len(rows) // 3)
-    early = sum(r[3] for r in rows[:third]) / third
-    late = sum(r[3] for r in rows[-third:]) / third
-    print(f"  gap early {early:.1f}%  ->  late {late:.1f}%", end="  ")
-    if late > early + 2.0:
-        print("OPENING: the run is memorising, and more steps make it worse.")
-    elif late < early - 2.0:
-        print("closing: still generalising, more steps may pay.")
-    else:
-        print("flat: the gap is not the thing limiting this run.")
+    # Is the gap opening? Only the converged part of the run can answer that.
+    #
+    # A first version compared the first third against the last and called both
+    # runs "OPENING", which was wrong and worth recording. Early in training the
+    # gap is NEGATIVE - the baseline starts at -37 % - because train_loss_epoch
+    # averages over an epoch during which the model was still improving, while
+    # val_loss is measured once at the end of it. So the training number is
+    # stale and looks worse than it is. That transient dominates any comparison
+    # that includes it, and it says nothing about memorisation.
+    #
+    # So: drop the warmup, then split what remains in half.
+    tail = [r for r in rows if r[0] >= args.converged * max(val)]
+    if len(tail) >= 4:
+        half = len(tail) // 2
+        early = sum(r[3] for r in tail[:half]) / half
+        late = sum(r[3] for r in tail[half:]) / (len(tail) - half)
+        print(f"\n  over the last {100 * (1 - args.converged):.0f}% of training:"
+              f" gap {early:.1f}% -> {late:.1f}%", end="  ")
+        if late > early + 1.0:
+            print("OPENING")
+            print("  The run is fitting the training set harder without gaining")
+            print("  on validation. More steps make that worse, not better.")
+        elif late < early - 1.0:
+            print("still closing")
+            print("  More steps may pay - but check the schedule first, since a")
+            print("  cosine that has already reached zero cannot use them.")
+        else:
+            print("flat")
+            print("  Not overfitting. Whether more steps would help is a")
+            print("  question about the learning-rate schedule, not this gap.")
+
+        # The gap is a ratio and can sit still while both curves drift. What
+        # actually defines overfitting is validation loss turning upward.
+        v_early = sum(r[2] for r in tail[:half]) / half
+        v_late = sum(r[2] for r in tail[half:]) / (len(tail) - half)
+        drift = 100.0 * (v_late - v_early) / v_early
+        print(f"  validation itself: {v_early:.5f} -> {v_late:.5f}"
+              f" ({drift:+.2f}%)", end="  ")
+        print("rising - past the useful point." if drift > 0.25 else
+              "still falling." if drift < -0.25 else
+              "flat: converged, not overfitting.")
 
     if args.csv:
         os.makedirs(os.path.dirname(os.path.abspath(args.csv)) or ".",
@@ -242,9 +272,28 @@ def main(args):
         for run, (_s, tr, vl, gp) in finals.items():
             print(f"{os.path.basename(run.rstrip('/')):<28}"
                   f"{tr:>10.5f}{vl:>10.5f}{gp:>8.1f}%")
-        print("\nA lower val with a LARGER gap bought its improvement by fitting")
-        print("the training set harder, and will not extend. A lower val with the")
-        print("same gap is a real gain and leaves room for more steps.")
+        # Read the two runs against each other rather than leaving it to the
+        # reader, because the interesting case is easy to walk past: a run whose
+        # TRAINING loss is worse and whose validation loss is better has not
+        # bought anything by fitting harder - it generalises better outright,
+        # which is the strongest form the result can take.
+        names = list(finals)
+        (t0, v0), (t1, v1) = ((finals[n][1], finals[n][2]) for n in names[:2])
+        a, b = (os.path.basename(n.rstrip('/')) for n in names[:2])
+        print()
+        if v1 < v0 and t1 > t0:
+            print(f"{b} fits the training set WORSE than {a} ({t1:.5f} against")
+            print(f"{t0:.5f}) and validates BETTER ({v1:.5f} against {v0:.5f}).")
+            print("None of its gain came from memorising, so it is a property of")
+            print("the architecture and should extend to data neither run saw.")
+        elif v1 < v0 and (v0 - v1) > (t0 - t1):
+            print(f"{b} improves validation more than training, so the gain is")
+            print("mostly generalisation rather than fit.")
+        elif v1 < v0:
+            print(f"{b} improved both, and improved training by more. Some of the")
+            print("gain is extra fit and may not extend; check the gap column.")
+        else:
+            print(f"{b} did not improve on {a}'s validation loss.")
 
 
 if __name__ == "__main__":
@@ -254,5 +303,8 @@ if __name__ == "__main__":
                    help="run directories, e.g. runs/prod_lr5e-5 runs/p1_wide")
     p.add_argument("--tail", type=int, default=6,
                    help="how many of the final epochs to print")
+    p.add_argument("--converged", type=float, default=0.5,
+                   help="fraction of training to discard before judging the "
+                        "trend; the early gap is negative and swamps everything")
     p.add_argument("--csv", help="write the merged per-epoch curves here")
     main(p.parse_args())

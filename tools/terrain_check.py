@@ -201,6 +201,9 @@ def main(args):
             print(f"  never over land, but within {args.near_km:.0f} km of it"
                   f" at +{near[0]:.0f} h; closest approach"
                   f" {rows[closest]['d_land']:.0f} km at +{closest:.0f} h")
+        elif not np.isfinite(rows[closest]['d_land']):
+            print("  no land in the domain at ANY lead. The storm is not merely")
+            print("  offshore, it is more than a domain radius from any coast.")
         else:
             print(f"  never within {args.near_km:.0f} km of land."
                   f" Closest approach {rows[closest]['d_land']:.0f} km"
@@ -219,15 +222,24 @@ def main(args):
 
     fig, ax = plt.subplots(figsize=(8.5, 7.5))
 
-    if land_pts:
-        lo = np.concatenate([p[0] for p in land_pts if p[0].size])
-        la = np.concatenate([p[1] for p in land_pts if p[1].size])
+    # `land_pts` is non-empty as soon as any file was read, but every entry can
+    # still be an empty array - which is exactly what happens for the case this
+    # tool was written for, a storm that never comes near land. Filtering has to
+    # come before the truth test, or np.concatenate gets an empty list and
+    # raises, and the figure fails precisely when the answer is most decisive.
+    have = [p for p in land_pts if p[0].size]
+    if have:
+        lo = np.concatenate([p[0] for p in have])
+        la = np.concatenate([p[1] for p in have])
         # Deduplicate on a coarse grid: every lead contributes its own copy of
         # the same coastline, and scattering all of them is slow and opaque.
         key = np.unique(np.round(np.stack([lo, la]) / 0.25).astype(int), axis=1)
         ax.scatter(key[0] * 0.25, key[1] * 0.25, s=6, c='0.72', marker='s',
                    linewidths=0, zorder=1,
                    label='land, as the model sees it')
+    else:
+        ax.text(0.5, 0.02, "no land anywhere in any domain, at any lead",
+                transform=ax.transAxes, ha='center', fontsize=9, color='0.4')
 
     for (label, rows), colour in zip(series.items(), colours):
         hours = sorted(rows)
