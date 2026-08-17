@@ -30,8 +30,10 @@ Usage
     python tools/terrain_check.py \\
         --run "P1=$R/202421W/one_way_couple_model_LLAT_polar_p1_v1/start_from_2024102600" \\
         --era5 /wk2/yungyun/FCNV2_TC/202421W/ERA5/for_DLAMPty \\
-        --tc-id 202421W --init 2024102600 \\
-        --out analysis/figures/terrain/202421W_2024102600.png
+        --tc-id 202421W --init 2024102600
+
+The figure lands in analysis/figures/forecasts/<TCID>/<init>/terrain.png unless
+--out says otherwise.
 """
 import argparse
 import datetime
@@ -112,6 +114,17 @@ def truth_track(era5_dir, tc_id, init, leads, n, meta, core_deg):
             continue
         out[h] = probe(f, core_deg)
     return out
+
+
+def default_out(tc_id, init):
+    """analysis/figures/forecasts/<TCID>/<init>/terrain.png
+
+    The layout the other figures already use - one directory per case and per
+    initial time, with the filename saying which plot it is - so a case's
+    figures stay together instead of by figure type.
+    """
+    return os.path.join("analysis", "figures", "forecasts", tc_id, init,
+                        "terrain.png")
 
 
 def draw(ax, hours, lons, lats, colour, label):
@@ -231,7 +244,7 @@ def main(args):
     ax.set_title(f"{args.tc_id}  init {init:%Y-%m-%d %HZ}  "
                  f"track against the land the model was shown")
 
-    out = os.path.expanduser(args.out)
+    out = os.path.expanduser(args.out or default_out(args.tc_id, args.init))
     os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
     fig.tight_layout()
     fig.savefig(out, dpi=140)
@@ -246,7 +259,9 @@ if __name__ == "__main__":
     p.add_argument("--era5", help="TC-centred ERA5 directory, for the truth track")
     p.add_argument("--tc-id", required=True)
     p.add_argument("--init", required=True, help="YYYYMMDDHH")
-    p.add_argument("--out", default="analysis/figures/terrain/track.png")
+    p.add_argument("--out", default=None,
+                   help="defaults to analysis/figures/forecasts/<TCID>/<init>/"
+                        "terrain.png, alongside the other figures for the case")
     p.add_argument("--core-deg", type=float, default=2.0,
                    help="radius around the centre searched for land and terrain; "
                         "2 deg is about the outer eyewall and inner rainbands")

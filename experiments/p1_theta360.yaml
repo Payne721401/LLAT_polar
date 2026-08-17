@@ -3,9 +3,15 @@
 #   sbatch --export=ALL,FRESH=1,RUNDIR=runs/p1_theta360,OVERLAY=experiments/p1_theta360.yaml \
 #          job_scripts/train_h200.sh
 #
-# Built on P1, changing Theta from 180 to 360 and nothing else. P1's own change -
-# R = 40 with patch_r = 4 - is kept, so this is P1 plus azimuthal density and a
-# comparison against runs/p1_wide attributes to that alone.
+# Built on P1, which keeps R = 40 with patch_r = 4, so a comparison against
+# runs/p1_wide attributes to the azimuthal grid alone.
+#
+# "Alone" is why the coarse window changes too, and that is not a contradiction.
+# A window size is a token count, not a distance, so carrying one over unchanged
+# does not carry over the ground it covers: doubling Theta halves that, silently.
+# Holding the config text fixed would change two things about the model at once -
+# the sampling density AND the coarse receptive field - and a disappointing
+# result could not be assigned to either. See window_shape2 below.
 #
 # ── The sampling argument, which is real but only at the rim ────────────
 # Theta = 180 puts a column every 2 degrees of azimuth. Converted to distance
@@ -31,15 +37,17 @@
 # also the mechanically clean one.
 #
 # ── What it costs ───────────────────────────────────────────────────────
-#     P1        8 x 10 x 30 tokens = 2,400
-#     this      8 x 10 x 60 tokens = 4,800
+#     P1        8 x 10 x 30 tokens = 2,400 fine,   8 x 5 x 15 =   600 coarse
+#     this      8 x 10 x 60 tokens = 4,800 fine,   8 x 5 x 30 = 1,200 coarse
 #
-# Twice the tokens. Attention within a window is unchanged - the window is still
-# 15 theta-tokens wide - so the cost scales with the token count rather than its
-# square, but everything outside attention scales with it too. Expect close to 2x
-# wall clock per step and roughly 2x activation memory; if it does not fit,
-# lowering the batch size changes the effective learning rate and breaks
-# attribution, so prefer activation checkpointing or bf16 over a smaller batch.
+# Twice the tokens, and 2.55x the attention: cost goes as tokens x window size
+# per stage, so the doubled token count gives 2.00x and the widened coarse window
+# adds the remaining 27 %, all of it at the stage where the tokens are fewest.
+# Expect roughly that in wall clock and about 2x activation memory.
+#
+# If it does not fit, do NOT lower the batch size - that changes the effective
+# learning rate and the run stops being comparable to p1_wide. Use activation
+# checkpointing or bf16-mixed instead, neither of which touches the optimisation.
 #
 # ── The reservation, recorded because it should be tested not assumed ───
 # The baseline finished with a 15.2 % train/val gap on 14,522 samples for 24.1 M
@@ -77,7 +85,27 @@ model:
   # 4, which is the whole point; the token count per window is what is held
   # fixed, not the ground each token covers.
   patch_shape: [2, 4, 6]
+  # Unchanged, and one window here now spans 90 degrees of azimuth against P1's
+  # 180. That is deliberate: fine-stage attention is about local structure, and
+  # 90 degrees already reaches far beyond the eyewall. Restoring 180 would mean
+  # [2, 10, 30] and 4.00x the baseline attention instead of 2.55x.
   window_shape1: [2, 10, 15]
-  window_shape2: [2, 5, 15]
+  # 30, not P1's 15, so that one coarse window still holds the whole circle:
+  #
+  #                        fine window        coarse window
+  #     P1  Theta=180      2 x 15 = 180 deg   1 x 15 = 360 deg
+  #     carried over       4 x 15 =  90 deg   2 x 15 = 180 deg   <- lost
+  #     this              4 x 15 =  90 deg   1 x 30 = 360 deg
+  #
+  # At the coarse stage every azimuth attends to every other in a single step,
+  # which is how the model sees a subtropical ridge sitting on one side of the
+  # storm. Split it into two windows and they meet only through the shifted-
+  # window overlap. Twelve of the sixteen blocks are at that stage and the
+  # steering flow is what they carry, so this is the property worth paying for.
+  #
+  # Both variants were built and pushed through a forward pass with
+  # tools/patch_design.py before this file was written; the 15 version runs, it
+  # just is not the same experiment.
+  window_shape2: [2, 5, 30]
   optimizer_args:
     lr: 0.00005
