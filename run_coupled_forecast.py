@@ -322,6 +322,8 @@ def main(args):
     llat = DLAMPty_model(args.model_yaml, root_dir=os.path.dirname(
         os.path.abspath(__file__)), device=args.llat_device)
     llat.initialize()
+    llat.dump_polar = (os.path.expanduser(args.dump_polar)
+                       if args.dump_polar else None)
     info = coupling_info(llat)
 
     if not standalone:
@@ -512,6 +514,12 @@ if __name__ == "__main__":
                    default="two-way",
                    help="standalone runs LLAT alone with the boundary frozen at "
                         "the IC: no FCNV2, no GPU, no second checkout")
+    p.add_argument("--dump-polar", default=None, metavar="DIR",
+                   help="save the model's output on its own (R, Theta) grid, "
+                        "before polar_to_latlon, as polar_{upper,sfc}_NNN.npy. "
+                        "A ring artefact is constant in theta and so appears as "
+                        "a horizontal stripe there; rmin_test --map has already "
+                        "ruled out the lat/lon transform as the source")
     p.add_argument("--feedback-radius", type=float, default=7.5,
                    help="degrees; LLAT writes back inside this radius (two-way)")
     p.add_argument("--boundary-radius", type=float, default=8.0,

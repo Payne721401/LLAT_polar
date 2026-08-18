@@ -615,6 +615,22 @@ class DLAMPty_model:
         # NaN does not spread: latlon_to_polar samples only r <= r_max so it never
         # reads the corners, LLAT->FCNV2 feedback reads only r < 7.5 deg, and the
         # FCNV2->LLAT boundary replacement overwrites the corners anyway.
+        # The last line at which the model's output still exists on the model's
+        # own grid. rmin_test measured only 4 % of the lat/lon round trip's error
+        # as a function of radius alone, so the concentric rings seen in plotted
+        # vorticity are not manufactured below - which leaves the model, and the
+        # only place to look at what the model made is above here. A ring is
+        # constant in theta, so in an (R, Theta) array it is a horizontal stripe
+        # and needs no diagnosis beyond being looked at.
+        if getattr(self, 'dump_polar', None) is not None:
+            os.makedirs(self.dump_polar, exist_ok=True)
+            i = getattr(self, '_dump_index', 0)
+            np.save(os.path.join(self.dump_polar, f"polar_upper_{i:03d}.npy"),
+                    output_upper)
+            np.save(os.path.join(self.dump_polar, f"polar_sfc_{i:03d}.npy"),
+                    output_surface)
+            self._dump_index = i + 1
+
         back_kw = dict(output_shape=(self.cartesian_n, self.cartesian_n),
                        r_max=self.r_max_px, center_xy=self.center_xy,
                        mode="bilinear", fill_value=np.nan)
