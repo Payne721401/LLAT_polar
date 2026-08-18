@@ -1,0 +1,64 @@
+# Experiment D' - the same halved radial patch, without upsampling the input.
+#
+#   sbatch --export=ALL,FRESH=1,RUNDIR=runs/t360_pr2,OVERLAY=experiments/t360_pr2.yaml \
+#          job_scripts/train_h200.sh
+#
+# The pair to experiments/t360_r80.yaml. Both reach the same token count and the
+# same physical patch size; they differ in whether the input is interpolated:
+#
+#     design                tokens     dr        patch_r   what dr means
+#     t360      R40 pr=4   8x10x60   0.250 deg   1.00 deg  matches ERA5
+#     t360_r80  R80 pr=4   8x20x60   0.125 deg   0.50 deg  2x finer than ERA5
+#     this      R40 pr=2   8x20x60   0.250 deg   0.50 deg  matches ERA5
+#
+# Running both is what separates two effects that t360_r80 confounds. A smaller
+# patch means the eyewall is no longer swallowed whole - the radius of maximum
+# wind is 0.3-0.5 deg against a 1.00 deg radial patch, and this halves it. More
+# rings means more input samples, but at dr = 0.125 those samples are
+# interpolated from 0.25 deg ERA5 and carry no information the source does not
+# have. If r80 helps and this does not, the extra samples mattered after all and
+# the upsampling is doing something real; if both help equally, the patch size
+# was the whole story and r80 is paying for interpolation.
+#
+# My expectation, written down so it can be wrong: they will be close, and this
+# one is the better default afterwards because it costs the same and assumes
+# less. Worth noting that the same reasoning was already checked once from the
+# other side - tools/rmin_test.py measured cell-centred rings as 7-15 % WORSE
+# than the current placement, so radial resampling schemes on this grid have not
+# been buying what they promise.
+#
+# Cost is identical to t360_r80: 9,600 tokens against t360's 4,800, and the
+# measured scaling on this hardware has consistently beaten the attention
+# arithmetic (P1 predicted 0.47x measured 0.91x, t360 predicted 2.55x measured
+# 1.18x), so expect 8-11 h on 8 H200s rather than the 2x the token count
+# suggests.
+#
+# The 16-GPU warning applies here too: Lightning's batch_size is per device, so
+# sixteen devices double the effective batch and halve the per-sample learning
+# rate. config.yaml sets 4; use 2 on sixteen devices to keep this comparable to
+# t360, or accept that the optimisation changed as well as the grid.
+#
+# Windows unchanged, and checked rather than assumed: 20 radial tokens against
+# window 10 is exactly two at full resolution, and the coarse stage's 10 against
+# window 5 is exactly two. Nothing padded at either stage. The azimuthal side is
+# untouched from t360 - 60 tokens, 4 windows fine, one whole-circle window
+# coarse.
+#
+# max_steps stays at 105,000, so this is comparable to runs/p1_theta360 on
+# architecture alone. experiments/t360_long.yaml is the separate experiment that
+# changes the schedule; do not change both in one run.
+
+data:
+  data_spatial_shape: [13, 40, 360]
+
+model:
+  data_spatial_shape: [13, 40, 360]
+  # patch_r 4 -> 2. That is the whole change: one radial patch now spans
+  # 2 x 0.25 = 0.50 deg instead of 1.03, which is the scale of the eyewall
+  # rather than several times it. ceil(40/2) = 20 radial tokens, even, so
+  # DownSample is happy (B8).
+  patch_shape: [2, 2, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  optimizer_args:
+    lr: 0.00005
