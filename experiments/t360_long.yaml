@@ -1,0 +1,80 @@
+# Experiment C - the same t360 geometry, twice the schedule.
+#
+#   sbatch --export=ALL,FRESH=1,RUNDIR=runs/t360_long,OVERLAY=experiments/t360_long.yaml \
+#          job_scripts/train_h200.sh
+#
+# ── The question ────────────────────────────────────────────────────────
+# The Cartesian model this is measured against was trained for 1,600,000 steps
+# at lr 4e-4. The polar runs get 105,000 at 5e-5. On the 2024 season the
+# Cartesian model is 1.7-2.3x better at every lead - 77 km against t360's 129 at
+# +24 h, 431 against 665 at +120 - and none of that gap can be attributed to the
+# coordinate system while the training budgets differ by a factor of fifteen.
+#
+# This does not close the gap; it takes the first factor of two and finds out
+# whether the curve is still going down.
+#
+# ── Why this is not just "raise max_steps" ──────────────────────────────
+# max_steps defines the cosine annealing schedule, so doubling it changes the
+# learning-rate trajectory as well as the length. That is the point here and it
+# was not the point in p1_wide.yaml, where the architecture was under test and
+# the schedule had to be held fixed. Read this run against runs/p1_theta360 as
+# "same model, longer schedule", not as an architecture comparison.
+#
+# What tools/train_val_gap.py says about whether there is anything to gain:
+# t360 reached its best validation at step 98,971 of 104,873, which is 94 % of
+# the way through, and validation was still falling 1.2 % over the final half.
+# It converged on its schedule rather than exhausting what it can learn - and
+# those are different situations. A model that had genuinely run out would put
+# its best checkpoint well before the end and turn upward after it.
+#
+# The train/val gap is 12.5 %, against the R=41 baseline's 15.2 %, and it was
+# flat over the last stretch. So there is headroom rather than memorisation, and
+# doubling the schedule is a reasonable bet rather than a hopeful one.
+#
+# ── The second question this answers ────────────────────────────────────
+# Whether longer training removes the patch-scale texture the model draws in the
+# outer disc. tools/polar_seam.py measures it: on 202421W in standalone mode P1
+# puts 1.23 % of its azimuthal variance at the patch harmonic outside 8 degrees,
+# against 0.07 % inside. Rerun it against this checkpoint. If the number falls,
+# the texture was undertraining; if it does not, it is structural, and the
+# spatial loss weight w(r) = r^p is the thing to try next.
+#
+# My expectation, recorded so it can be wrong: it will NOT fall much. Nothing in
+# an unweighted L1 over 98 channels penalises a percent-level ripple, so more
+# steps of the same objective have no reason to remove it.
+#
+# ── Cost ────────────────────────────────────────────────────────────────
+# t360 took 6 h 40 m for 105,000 steps on 8 H200s (job 271212), against P1's
+# 5 h 38 m - 1.18x, not the 2.55x the attention arithmetic predicted, because
+# attention is not the bottleneck on this hardware. So expect about 13 h 20 m.
+# Check the queue limit before submitting; if the walltime does not fit, halve
+# the increase rather than letting the job be killed mid-schedule, which leaves
+# a cosine that never annealed and a run that compares to nothing.
+#
+# Watch the disk. Thirty checkpoints at 305 MB is 9.2 GB per run and a full
+# quota truncates a checkpoint mid-write, which is how job 257976 died. SAVE_TOP_K
+# is settable from the environment:
+#   sbatch --export=ALL,SAVE_TOP_K=10,FRESH=1,RUNDIR=runs/t360_long,...
+
+trainer:
+  # 105,000 -> 210,000. Warmup stays at 1,000 steps: it exists to get past the
+  # unstable first epochs, and that job does not get bigger because the run is
+  # longer.
+  max_steps: 210000
+
+data:
+  data_spatial_shape: [13, 40, 360]
+
+model:
+  data_spatial_shape: [13, 40, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  # 30, so one coarse window still spans the whole circle - see
+  # experiments/p1_theta360.yaml for why a window size is a token count and
+  # carrying it over unchanged silently halves the ground it covers.
+  window_shape2: [2, 5, 30]
+  optimizer_args:
+    # Unchanged at 5e-5. Raising it towards the Cartesian model's 4e-4 is the
+    # other half of the budget difference and worth testing, but not in the same
+    # run: two changes at once and a disappointing result is unattributable.
+    lr: 0.00005
