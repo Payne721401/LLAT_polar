@@ -169,14 +169,26 @@ def main(args):
                            squeeze=False)
     for row, name in enumerate(order):
         a, b = fields[name]
-        a = np.where(inside, a, np.nan)
-        b = np.where(inside, b, np.nan)
+        if not args.square:
+            a = np.where(inside, a, np.nan)
+        # b keeps its NaN corners either way. With --square that is the point:
+        # 23.4 % of the frame has no polar data at all, and masking the original
+        # to match hides the single largest thing the grid costs.
         d = b - a
-        vm = float(np.nanpercentile(np.abs(a), 99))
+        # A field centred on zero (vorticity, divergence) wants a symmetric
+        # diverging scale; one with a large offset (msl near 100,500 Pa) is
+        # rendered a single flat colour by it. Deciding per field rather than
+        # globally, which drew the msl row as a solid block.
+        lo, hi = (float(np.nanpercentile(a, 1)), float(np.nanpercentile(a, 99)))
+        if lo < 0 < hi and abs(lo) / max(hi, 1e-9) > 0.2:
+            vm = max(abs(lo), abs(hi))
+            lo, hi, cmap = -vm, vm, 'RdBu_r'
+        else:
+            cmap = 'viridis'
         dm = float(np.nanpercentile(np.abs(d[np.isfinite(d)]), 99)) or 1.0
         for col, (arr, ttl, kwargs) in enumerate([
-                (a, "original", dict(cmap='RdBu_r', vmin=-vm, vmax=vm)),
-                (b, "round trip", dict(cmap='RdBu_r', vmin=-vm, vmax=vm)),
+                (a, "original", dict(cmap=cmap, vmin=lo, vmax=hi)),
+                (b, "round trip", dict(cmap=cmap, vmin=lo, vmax=hi)),
                 (d, "difference", dict(cmap='PuOr_r', vmin=-dm, vmax=dm))]):
             im = ax[row][col].imshow(arr, origin='lower', cmap=kwargs['cmap'],
                                      vmin=kwargs['vmin'], vmax=kwargs['vmax'])
@@ -217,5 +229,12 @@ if __name__ == "__main__":
                    help="include the u/v -> vt/vr -> u/v rotation the vt_vr "
                         "model cards use")
     p.add_argument("--convention", default="ccw_inward_flip")
+    p.add_argument("--square", action="store_true",
+                   help="draw the whole 81x81 frame instead of just the disc. "
+                        "The round-trip and difference columns then show the "
+                        "corners as blank, which is 23.4 %% of the domain the "
+                        "polar grid does not represent at all - the largest "
+                        "single thing it costs, and invisible when both columns "
+                        "are masked to the disc")
     p.add_argument("--out", default="analysis/figures/transform/sensitivity.png")
     main(p.parse_args())
