@@ -204,7 +204,43 @@ PANELS = [
          shade=lambda f: f.s('tcwv'),
          cmap="YlGnBu", unit="kg m$^{-2}$",
          wind=('stream', lambda f: (f.u('u', 500), f.u('v', 500)))),
+    # ── Beyond the default five, selected with --panels ──────────────────
+    #
+    # Each exists for one open question, and none needs a forecast rerun: they
+    # are all derived from channels already saved.
+    #
+    # The subtropical ridge is defined by z500 contours, and where its western
+    # edge sits decides whether a storm recurves. The TCWV panel above shows
+    # moisture, which does not mark the ridge at all, so the one field bearing
+    # directly on the track bias was not being drawn.
+    dict(label="500 hPa height",
+         shade=lambda f: f.u('z', 500) / 9.80665,
+         cmap="Spectral_r", unit="m",
+         wind=('stream', lambda f: (f.u('u', 500), f.u('v', 500))),
+         contour=lambda f: f.u('z', 500) / 9.80665),
+    # Deep-layer shear is the classic constraint on intensification, and the
+    # measured error is that intensification arrives about 60 h late. A
+    # systematically stronger shear would be the mechanism.
+    dict(label="200-850 shear",
+         shade=lambda f: np.hypot(f.u('u', 200) - f.u('u', 850),
+                                  f.u('v', 200) - f.u('v', 850)),
+         cmap="magma_r", unit="m s$^{-1}$", zero_based=True,
+         wind=('quiver', lambda f: (f.u('u', 200) - f.u('u', 850),
+                                    f.u('v', 200) - f.u('v', 850)))),
+    # Warm core, as an anomaly against the panel's own areal mean so the colours
+    # mean the same thing at every lead and latitude. This is the field that
+    # separates a tropical cyclone from an extratropical one - a distinction
+    # once asserted here from centre-point scalars, which cannot settle it.
+    dict(label="300 hPa T anomaly",
+         shade=lambda f: f.u('t', 300) - np.nanmean(f.u('t', 300)),
+         cmap="RdBu_r", unit="K", sym=True,
+         wind=('quiver', lambda f: (f.u('u', 300), f.u('v', 300)))),
 ]
+
+
+# Rows drawn when --panels is not given. The rest are opt-in so that every
+# existing command, figure and animation keeps the layout it had.
+N_DEFAULT = 5
 
 
 def mask_outside(field, arr, radius_deg):
@@ -313,7 +349,7 @@ def main(args):
         columns.insert(0, ("ERA5", load_era5(args.era5, args.tc_id, valid, n,
                                              metas[0])))
 
-    panels = [PANELS[i] for i in args.panels] if args.panels else PANELS
+    panels = [PANELS[i] for i in args.panels] if args.panels else PANELS[:N_DEFAULT]
     nrow, ncol = len(panels), len(columns)
     fig, axes = plt.subplots(nrow, ncol, figsize=(3.6 * ncol, 3.2 * nrow),
                              squeeze=False)
@@ -364,7 +400,11 @@ if __name__ == "__main__":
                    help="forecast hour; omit to list what the run contains")
     p.add_argument("--out", default="forecast.png")
     p.add_argument("--panels", type=int, nargs="*", default=None,
-                   help=f"subset of rows 0..{len(PANELS)-1}; default all")
+                   help=f"subset of rows 0..{len(PANELS)-1}; default is "
+                        f"0..{N_DEFAULT-1}. Rows {N_DEFAULT}+ are the "
+                        f"diagnostic ones: "
+                        + ", ".join(f"{i}={PANELS[i]['label']}"
+                                    for i in range(N_DEFAULT, len(PANELS))))
     p.add_argument("--mask-radius", type=float, default=0.0,
                    help="blank beyond this radius in degrees; 0 (the default) "
                         "shows everything the model produced. A default that "

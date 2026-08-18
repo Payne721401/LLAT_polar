@@ -188,10 +188,10 @@ if __name__ == "__main__":
                         "two-hourly frames and 12 is half-daily")
     p.add_argument("--min-lead", type=int, default=0)
     p.add_argument("--max-lead", type=int, default=None)
-    p.add_argument("--fps", type=float, default=1.2,
+    p.add_argument("--fps", type=float, default=1.0,
                    help="frames per second. These panels carry a lot of detail "
-                        "and 4 fps was too fast to read any of it; 1.2 is about "
-                        "0.8 s a frame. Use --seconds-per-frame to say it the "
+                        "and 4 fps was too fast to read any of it; 1.0 is one "
+                        "second a frame. Use --seconds-per-frame to say it the "
                         "other way round")
     p.add_argument("--seconds-per-frame", type=float, default=None,
                    help="overrides --fps, for when the natural unit is dwell "
