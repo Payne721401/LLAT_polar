@@ -126,9 +126,19 @@ def main(args):
             print(f"outside {args.boundary_radius:g} deg. The coupling is making")
             print("it, so it is an inference problem: no retraining involved.")
         elif ob > 0 and oa / ob > 2.0:
-            print(f"{la} has more than {lb}, which is backwards for a coupling")
-            print("artefact and worth checking the two runs really differ only")
-            print("in --mode.")
+            # Measured on 202421W: standalone 1.23 % outside against one-way's
+            # 0.17 %, with standalone peaking at 7.2-8.7 deg and falling back to
+            # 0.06 % beyond 9. That is not a broken comparison, it is the answer.
+            print(f"{la} has {oa / ob:.1f}x the patch-scale energy of {lb}")
+            print(f"outside {args.boundary_radius:g} deg, which is the signature")
+            print("of a MODEL artefact that the coupling covers up rather than")
+            print("causes: FCNV2 overwrites everything outside the boundary")
+            print("radius, so whatever the model drew there is discarded.")
+            print()
+            print("So the fix belongs in training or tokenisation, not in the")
+            print("exchange - and in the production one-way setting the artefact")
+            print("is largely painted over already, which bounds how much it")
+            print("matters to a forecast.")
         else:
             print(f"{la} and {lb} carry comparable patch-scale energy outside")
             print(f"{args.boundary_radius:g} deg, so the coupling is NOT making")

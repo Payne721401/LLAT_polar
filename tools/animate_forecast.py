@@ -156,6 +156,8 @@ def main(args):
 
     print(f"{len(leads)} frames, +{leads[0]} to +{leads[-1]} h, "
           f"every {args.every * (leads[1] - leads[0]) // args.every if len(leads) > 1 else 0} h")
+    if args.seconds_per_frame:
+        args.fps = 1.0 / max(args.seconds_per_frame, 1e-3)
     frames = render(args, leads, frame_dir)
 
     if args.mp4:
@@ -186,7 +188,14 @@ if __name__ == "__main__":
                         "two-hourly frames and 12 is half-daily")
     p.add_argument("--min-lead", type=int, default=0)
     p.add_argument("--max-lead", type=int, default=None)
-    p.add_argument("--fps", type=float, default=4.0)
+    p.add_argument("--fps", type=float, default=1.2,
+                   help="frames per second. These panels carry a lot of detail "
+                        "and 4 fps was too fast to read any of it; 1.2 is about "
+                        "0.8 s a frame. Use --seconds-per-frame to say it the "
+                        "other way round")
+    p.add_argument("--seconds-per-frame", type=float, default=None,
+                   help="overrides --fps, for when the natural unit is dwell "
+                        "time rather than rate")
     p.add_argument("--mask-radius", type=float, default=0.0,
                    help="passed to plot_forecast; held fixed across frames so "
                         "the animation does not flicker")
