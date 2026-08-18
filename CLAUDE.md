@@ -343,3 +343,41 @@ file carries. The mismatch is real and bounded at ~30 km by the vortex-to-vortex
 so it is a documentation item, not a research one.
 
 `onnx/*.onnx` is gitignored (~106 MB) and must be copied separately.
+
+**Copying to the lab host.** It does not listen on 22, so `scp` needs `-P 6606` — CAPITAL
+`-P` for `scp`, while `ssh` takes lowercase `-p`, and lowercase `-p` on scp means "preserve
+timestamps" and silently leaves you on port 22. `-O` forces the legacy SCP protocol that
+OpenSSH 9 replaced with SFTP:
+
+```
+scp -O -P 6606 onnx/X.onnx onnx/X.yaml payne@140.112.67.82:~/LLAT_polar/onnx/
+```
+
+`tar cf - ... | ssh -p 6606 host 'cd ~/LLAT_polar && tar xf -'` avoids scp and sftp entirely.
+
+### The Cartesian control, and what already exists
+
+`/wk2/yungyun/FCNV2_TC/{TC_ID}/` holds finished coupled runs beside the IC, so **look before
+running anything**: `one_way_couple_model`, `2_way_circle_couple_model`,
+`2_way_circle_couple_model_LLATty_polar_v1`, several `*_v60_e3268` variants with DA and
+nudging, `ERA5_bdy`, `DSAT_2D_obs`. A Cartesian season may already be there.
+
+`{TC_ID}/ERA5/` holds `for_DLAMPty` (the `*_combined.nc` LLAT IC), `for_FCNV2` (the global
+IC), and three track CSVs — `ERA5_TC_track.csv`, `ERA5_TC_track_new.csv`,
+`ERA5_TC_track_radius5.csv`. Check which one a script wants; do not assume.
+
+The Cartesian model runs from the **other repo**, `~/couple_FCNV2_LLAT`, with cwd there:
+
+```
+python inference_one_way_test.py --FCNV2_IC_path ... \
+    --LLAT_IC_path .../{TC}_{stamp}_combined.nc --IC_time {stamp} \
+    --save_folder ... --fore_hour 120 --LLAT_device cuda
+```
+
+`--LLAT_device` defaults to **cpu**, unusable for a season; pass `cuda`. One process peaks
+near 9.2 GB, so run one at a time.
+
+**Do not run the Cartesian model through `run_coupled_forecast.py`.**
+`DLAMPty_inference.py:341` raises without a `polar:` block, and the boundary geometries are
+irreducibly different (see Invariants). Merging the pipelines would hide the difference
+rather than control for it.

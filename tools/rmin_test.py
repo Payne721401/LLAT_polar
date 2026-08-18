@@ -24,6 +24,7 @@ Usage
     python tools/rmin_test.py --nc path/to.nc --var msl
 """
 import argparse
+import os
 
 import numpy as np
 from scipy.ndimage import map_coordinates
@@ -125,6 +126,94 @@ def main(args):
     print("throws away, before any model sees it. A small number here means the")
     print("degenerate ring is a tidiness issue and not a forecast one.")
 
+    if args.map:
+        back, rc, _ = round_trip(field, args.R, args.Theta, r_max_px, False)
+        error_map(field, back, rc, args, label)
+
+
+def axisymmetry(err, deg, nbins=40):
+    """How much of the error is a function of radius alone?
+
+    The distinction that decides where an artefact comes from. Resampling error
+    that is unstructured shows up as speckle and averages away around a ring;
+    error produced BY the ring geometry - a grid too coarse at one radius, the
+    degenerate centre, the join between rings - is the same at every azimuth and
+    survives the azimuthal mean. Concentric rings in a plotted vorticity field
+    are the second kind, and this separates them without anyone squinting at a
+    picture.
+
+    Returns the bin centres, the azimuthal-mean profile, and the fraction of the
+    error variance that profile carries. A high fraction means the artefact
+    belongs to the grid, so no amount of training removes it and the sampling has
+    to change. A low one means the model is producing it.
+
+    READ THIS ON A REAL FIELD, NOT THE SYNTHETIC VORTEX. The synthetic field is
+    axisymmetric by construction, so its error has no choice but to be, and it
+    scores about 90 % whatever the transform does. On an ERA5 field, which has
+    fronts and asymmetric rainbands, a high score is evidence rather than an
+    artefact of the test.
+    """
+    m = np.isfinite(err)
+    edges = np.linspace(0, float(np.nanmax(deg[m])), nbins + 1)
+    idx = np.clip(np.digitize(deg, edges) - 1, 0, nbins - 1)
+    prof = np.array([np.nanmean(err[m & (idx == i)]) if (m & (idx == i)).any()
+                     else np.nan for i in range(nbins)])
+    sym = prof[idx]
+    tot = float(np.nanvar(err[m]))
+    frac = float(np.nanvar(sym[m]) / tot) if tot > 0 else float('nan')
+    return 0.5 * (edges[:-1] + edges[1:]), prof, frac
+
+
+def error_map(field, back, rc, args, label):
+    """Draw what the round trip did, and say which kind of error it is."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    err = back - field
+    deg = rc * args.res
+    centres, prof, frac = axisymmetry(np.abs(err), deg)
+
+    fig, ax = plt.subplots(1, 4, figsize=(17.5, 4.2))
+    lim = float(np.nanmax(deg))
+    ext = [-lim, lim, -lim, lim]
+    v = float(np.nanpercentile(np.abs(err[np.isfinite(err)]), 99))
+    for a, (arr, ttl, kw) in zip(ax, [
+            (field, "original", dict(cmap='viridis')),
+            (back, "after polar round trip", dict(cmap='viridis')),
+            (err, "difference", dict(cmap='RdBu_r', vmin=-v, vmax=v))]):
+        im = a.imshow(arr, origin='lower', extent=ext, **kw)
+        a.set_title(ttl)
+        a.set_xlabel("deg")
+        fig.colorbar(im, ax=a, fraction=0.046)
+
+    ax[3].plot(centres, prof, '-o', ms=3)
+    ax[3].set_xlabel("radius [deg]")
+    ax[3].set_ylabel("azimuthal mean |error|")
+    ax[3].set_title(f"axisymmetric fraction {100 * frac:.0f}%")
+    ax[3].grid(alpha=0.3)
+
+    fig.suptitle(f"{label}   R={args.R}  Theta={args.Theta}")
+    out = os.path.expanduser(args.map)
+    os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out, dpi=140)
+
+    print(f"\nwrote {out}")
+    print(f"  {100 * frac:.0f}% of the round-trip error variance is a function")
+    print(f"  of radius alone.", end=" ")
+    if frac > 0.5:
+        print("That is a ring artefact: the same at every")
+        print("  azimuth because the grid produced it, not the field. Training")
+        print("  cannot remove it; the sampling has to change.")
+    elif frac > 0.2:
+        print("Part ring, part speckle - the rings are")
+        print("  real but they are not the whole story.")
+    else:
+        print("Mostly unstructured. The concentric")
+        print("  rings in the forecast fields are NOT coming from this transform;")
+        print("  look at what the model produces in polar space instead.")
+
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(
@@ -139,6 +228,10 @@ if __name__ == "__main__":
     p.add_argument("--R", type=int, default=41)
     p.add_argument("--Theta", type=int, default=180)
     p.add_argument("--res", type=float, default=0.25)
+    p.add_argument("--map", default=None, metavar="PNG",
+                   help="also draw the round-trip error field and split it into "
+                        "the part that is a function of radius alone - which is "
+                        "what a concentric-ring artefact is - and the rest")
     p.add_argument("--rmw", type=float, default=0.4,
                    help="radius of maximum wind in degrees; the scale that "
                         "matters and the one a 2-degree patch cannot see")
