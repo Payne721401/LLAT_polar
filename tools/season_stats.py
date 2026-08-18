@@ -81,9 +81,15 @@ def forecast_centre(run_dir, lead, meta):
 # the two live under different version directories by construction. Globbing the
 # prefix finds whichever is there, and the resolved name is printed so a wrong
 # directory is visible rather than silently empty.
-MODE_DIR = {'one-way': 'one_way_couple_model_*',
-            'two-way': '2_way_circle_couple_model_*',
-            'standalone': 'standalone_*'}
+# No underscore before the star. The polar runs name themselves
+# `one_way_couple_model_LLAT_polar_p1_v1`, but the Cartesian runs already sitting
+# in /wk2/yungyun/FCNV2_TC/{TC_ID}/ are plain `one_way_couple_model` with no
+# version suffix - and `one_way_couple_model_*` does not match that, so the whole
+# Cartesian control read as an empty run despite having the same layout and the
+# same output_sfc_NNNh.npy files. One character.
+MODE_DIR = {'one-way': 'one_way_couple_model*',
+            'two-way': '2_way_circle_couple_model*',
+            'standalone': 'standalone*'}
 
 # Directories the prefix glob would sweep in but which are separate experiments.
 # `_scale1.45` and friends are --frame-speed-scale runs: the same model with the
