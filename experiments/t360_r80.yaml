@@ -1,0 +1,78 @@
+# Experiment D - twice the radial resolution, on the t360 grid.
+#
+#   sbatch --export=ALL,FRESH=1,RUNDIR=runs/t360_r80,OVERLAY=experiments/t360_r80.yaml \
+#          job_scripts/train_h200.sh
+#
+# ── Why radial and not azimuthal ────────────────────────────────────────
+# Measured against the Cartesian model, patch by patch:
+#
+#     design                    tokens    dr      patch_r   arc@1deg  arc@10deg
+#     cartesian p(2,4,4)       8x21x21   0.25     1.00 deg   1.00 deg  1.00 deg
+#     t360   R40 pr=4          8x10x60   0.250    1.00 deg   0.105     1.047
+#     this   R80 pr=4          8x20x60   0.125    0.50 deg   0.105     1.047
+#
+# The polar grid already beats the Cartesian one badly in the azimuthal
+# direction near the core - a patch spans 0.105 deg of arc at r = 1 against the
+# Cartesian 1.0 - but its RADIAL patch is 1.00 deg, exactly what the Cartesian
+# model has. The radius of maximum wind is 0.3-0.5 deg, so one radial patch still
+# swallows the entire eyewall, and no amount of azimuthal density changes that.
+# Radial patch size is the binding constraint on core structure and this halves
+# it, to 0.50 deg.
+#
+# ── The honest caveat, and the alternative ──────────────────────────────
+# R = 80 over r_degree_max = 10 gives dr = 0.125 deg, which is TWICE AS FINE AS
+# THE 0.25 deg ERA5 it is sampled from. The extra rings are interpolated; they
+# carry no information the source does not have.
+#
+# There is a way to get the same patch geometry without that:
+#
+#     R = 40, patch_r = 2   ->  8x20x60 tokens, patch_r = 0.50 deg, dr = 0.25
+#
+# Identical token count, identical physical patch size, no upsampling. Both were
+# built and pushed through a forward pass with tools/patch_design.py. This file
+# is the R = 80 version because that is what was asked for; if the result
+# disappoints, run the R = 40 / patch_r = 2 variant before concluding anything
+# about radial resolution, because it separates "finer patches" from "more
+# interpolated input".
+#
+# ── Cost, and the 16-GPU warning ────────────────────────────────────────
+# 9,600 tokens against t360's 4,800. t360 took 6 h 40 m for 105,000 steps on 8
+# H200s, and the measured scaling has consistently been much better than the
+# attention arithmetic predicts (P1 predicted 0.47x, measured 0.91x; t360
+# predicted 2.55x, measured 1.18x), so expect somewhere near 8-11 h on 8 GPUs.
+#
+# ON 16 GPUs, READ THIS. Lightning's batch_size is PER DEVICE. Doubling the
+# device count doubles the effective batch, which changes the optimisation: the
+# gradient is averaged over twice as many samples, so the effective learning rate
+# per sample halves and the run stops being comparable to t360. Two choices:
+#
+#   keep batch_size    faster wall clock, but a different optimisation, and a
+#                      worse result cannot be attributed to the grid
+#   halve batch_size   same effective batch, same optimisation, and the only
+#                      thing that changed is the hardware
+#
+# Halve it if the point is to measure the grid. `data.batch_size` is the key;
+# check what config.yaml sets before overriding, and set it here explicitly
+# rather than relying on a default.
+#
+# ── Windows are unchanged, and that is checked, not assumed ─────────────
+# 20 radial tokens at full resolution with window_shape1 r = 10 is exactly two
+# windows; the coarse stage has 10 with window_shape2 r = 5, also exactly two.
+# Nothing is padded at either stage, so the geometry stays clean without
+# touching the windows.
+#
+# max_steps stays at 105,000, so this is comparable to runs/p1_theta360 on
+# architecture alone - the same schedule, the same learning rate, the same 231
+# epochs. experiments/t360_long.yaml is the separate experiment that changes the
+# schedule; do not change both in one run.
+
+data:
+  data_spatial_shape: [13, 80, 360]
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  optimizer_args:
+    lr: 0.00005
