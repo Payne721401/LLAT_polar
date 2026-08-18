@@ -44,6 +44,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 M_PER_DEG = 111_320.0
 
+# Full names and units, because "tp" and "4.9% lost" on a y-axis tell a reader
+# neither which field it is nor what was measured.
+NICE = {
+    'u':          ('zonal wind u', 'm s$^{-1}$'),
+    'v':          ('meridional wind v', 'm s$^{-1}$'),
+    'msl':        ('mean sea level pressure', 'Pa'),
+    'tp':         ('total precipitation', 'm'),
+    'tcwv':       ('total column water vapour', 'kg m$^{-2}$'),
+    't2m':        ('2 m temperature', 'K'),
+    'vorticity':  ('relative vorticity  dv/dx - du/dy', '10$^{-5}$ s$^{-1}$'),
+    'divergence': ('divergence  du/dx + dv/dy', '10$^{-5}$ s$^{-1}$'),
+}
+
+
+def nice(name):
+    return NICE.get(name, (name, ''))
+
 
 def curl_div(u, v, lon, lat):
     """Relative vorticity and divergence on the lat/lon grid, in s^-1.
@@ -185,16 +202,32 @@ def main(args):
             lo, hi, cmap = -vm, vm, 'RdBu_r'
         else:
             cmap = 'viridis'
-        dm = float(np.nanpercentile(np.abs(d[np.isfinite(d)]), 99)) or 1.0
+        # The difference is shown as a percentage of the field's own RMS, on a
+        # scale fixed at +/-25 % for every row. A raw difference needs its own
+        # colourbar per row, in that row's units, and comparing rows then means
+        # dividing two numbers in your head; this way a strong colour means the
+        # same thing everywhere on the figure.
+        fa = float(np.sqrt(np.nanmean(np.where(np.isfinite(a), a, 0) ** 2)))
+        dpct = 100.0 * d / fa if fa else d
         for col, (arr, ttl, kwargs) in enumerate([
                 (a, "original", dict(cmap=cmap, vmin=lo, vmax=hi)),
-                (b, "round trip", dict(cmap=cmap, vmin=lo, vmax=hi)),
-                (d, "difference", dict(cmap='PuOr_r', vmin=-dm, vmax=dm))]):
+                (b, "after polar round trip", dict(cmap=cmap, vmin=lo, vmax=hi)),
+                (dpct, "error, % of field RMS",
+                 dict(cmap='PuOr_r', vmin=-25, vmax=25))]):
             im = ax[row][col].imshow(arr, origin='lower', cmap=kwargs['cmap'],
                                      vmin=kwargs['vmin'], vmax=kwargs['vmax'])
+            if col == 2:
+                # Outline the original underneath. Interpolation error lives on
+                # sharp gradients, and seeing the two together is the difference
+                # between "speckle" and "it traces the rainbands".
+                with np.errstate(invalid='ignore'):
+                    ax[row][col].contour(np.nan_to_num(a), levels=6,
+                                         colors='0.35', linewidths=0.4,
+                                         alpha=0.7)
             if row == 0:
                 ax[row][col].set_title(ttl)
-            fig.colorbar(im, ax=ax[row][col], fraction=0.046)
+            fig.colorbar(im, ax=ax[row][col], fraction=0.046,
+                         label='%' if col == 2 else '')
         ax[row][0].set_ylabel(f"{name}\n{100 * rows[name]:.1f}% lost",
                               fontsize=9)
     fig.suptitle(f"polar round trip, R={args.R} Theta={args.Theta}"
