@@ -293,8 +293,6 @@ if __name__ == "__main__":
                         "a statistic and a line drawn through them reads as one")
     p.add_argument("--out", default=None,
                    help="figure path; defaults to analysis/figures/season/"
-                        "intensity_<labels>.png")
-    p.add_argument("--out", default=None,
-                   help="draw the comparison as well; defaults to "
-                        "analysis/figures/season/intensity_<labels>.png")
+                        "intensity_<labels>.png, named after the runs so a "
+                        "second comparison does not overwrite the first")
     main(p.parse_args())
