@@ -42,6 +42,11 @@ import struct
 TRAIN_KEYS = ("train_loss_epoch", "train_loss", "loss_epoch")
 VAL_KEYS = ("val_loss", "val_loss_epoch")
 
+# A jump this long between consecutive events is downtime, not training. Steps
+# take under two minutes here, so an hour is far beyond any real stall and well
+# under the shortest requeue seen.
+IDLE_GAP_S = 3600.0
+
 
 def _varint(buf, i):
     """One protobuf base-128 varint. Returns (value, next index)."""
@@ -174,9 +179,33 @@ def curves_timed(run_dir):
             if w is not None:
                 t0 = w if t0 is None else min(t0, w)
                 wall[step] = w
-    if t0 is not None:
-        wall = {k: (v - t0) / 3600.0 for k, v in wall.items()}
-    return merged, wall, files
+    if t0 is None:
+        return merged, wall, files, 0.0
+
+    # Remove the queue. A resumed run has a gap in wall_time between the job
+    # that died and the job that continued it, and that gap is elapsed time but
+    # not compute: P1 read as 87.2 hours against t360's 6.7 because eighty of
+    # them were spent waiting after a full disk killed job 257976. Plotting that
+    # against validation loss draws an eighty-hour flat line and makes the
+    # wall-clock panel useless for exactly the runs that needed rescuing.
+    #
+    # Any jump longer than `idle_gap` is treated as downtime and subtracted, so
+    # the axis becomes compute time. The total removed is returned rather than
+    # hidden, because a run that needed six hours of requeueing is worth knowing
+    # about even though the number does not belong on the x-axis.
+    order = sorted(wall)
+    removed = 0.0
+    prev = wall[order[0]]
+    shift = 0.0
+    fixed = {}
+    for k in order:
+        w = wall[k]
+        if w - prev > IDLE_GAP_S:
+            shift += w - prev
+            removed += w - prev
+        fixed[k] = (w - t0 - shift) / 3600.0
+        prev = w
+    return merged, fixed, files, removed / 3600.0
 
 
 def pick(merged, keys):

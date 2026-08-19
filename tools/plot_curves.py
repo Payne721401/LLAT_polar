@@ -54,7 +54,7 @@ _spec.loader.exec_module(tvg)
 
 def series(run_dir):
     """Validation, training and elapsed hours for one run, aligned on step."""
-    merged, wall, files = tvg.curves_timed(os.path.expanduser(run_dir))
+    merged, wall, files, idle = tvg.curves_timed(os.path.expanduser(run_dir))
     _vn, val = tvg.pick(merged, tvg.VAL_KEYS)
     _tn, train = tvg.pick(merged, tvg.TRAIN_KEYS)
     if not val:
@@ -74,7 +74,7 @@ def series(run_dir):
     wsteps = sorted(wall)
     h = np.array([wall[max([w for w in wsteps if w <= s], default=wsteps[0])]
                   for s in steps]) if wsteps else None
-    return np.array(steps, dtype=float), v, t, h, len(files)
+    return np.array(steps, dtype=float), v, t, h, len(files), idle
 
 
 def main(args):
@@ -94,7 +94,7 @@ def main(args):
           f"{'hours':>8}{'gap':>8}")
     print("-" * 65)
     for (label, path), c in zip(runs, colours):
-        steps, v, t, h, nfiles = series(path)
+        steps, v, t, h, nfiles, idle = series(path)
         # Drop the warmup: the first epochs span two thirds of the y-range and
         # flatten everything that matters into a line at the bottom.
         keep = steps >= args.skip * steps.max()
@@ -116,12 +116,14 @@ def main(args):
         total = h[-1] if h is not None else np.nan
         print(f"{label:<14}{v[ib]:>10.5f}{steps[ib]:>10.0f}"
               f"{steps.max():>9.0f}{pct:>6.0f}{total:>8.1f}{gb:>7.1f}%"
-              + ("   (resumed)" if nfiles > 1 else ""))
+              + (f"   (resumed, {idle:.0f} h idle removed)"
+                 if idle > 0.5 else ""))
 
     ax[0].set_xlabel("step"), ax[0].set_ylabel("validation loss")
     ax[0].set_title("validation against steps\nwhich design learns more per step")
-    ax[1].set_xlabel("elapsed hours"), ax[1].set_ylabel("validation loss")
-    ax[1].set_title("validation against wall clock\nwhich design is worth the compute")
+    ax[1].set_xlabel("compute hours"), ax[1].set_ylabel("validation loss")
+    ax[1].set_title("validation against compute time\n"
+                    "queue time between resumed jobs removed")
     ax[2].set_xlabel("step"), ax[2].set_ylabel("(val - train) / train  [%]")
     ax[2].set_title("generalisation gap\nrising means fit is not transferring")
     for a in ax:
