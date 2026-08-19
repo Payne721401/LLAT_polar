@@ -145,7 +145,6 @@ def main(args):
             label, path = os.path.basename(spec.rstrip('/')), spec
         runs.append((label, os.path.expanduser(path)))
 
-    colours = ['tab:blue', 'tab:red', 'tab:green', 'tab:purple']
     series, land_pts = {}, []
 
     for label, path in runs:
@@ -258,12 +257,20 @@ def main(args):
         ax.text(0.5, 0.02, "no land anywhere in any domain, at any lead",
                 transform=ax.transAxes, ha='center', fontsize=9, color='0.4')
 
-    for (label, rows), colour in zip(series.items(), colours):
+    # Truth last and in black, so it is drawn over the forecasts rather than
+    # under them. And a real colour cycle rather than a list of four: zip against
+    # a short list silently truncates, and because ERA5 is appended last it was
+    # the series that disappeared - the one the figure exists to compare against.
+    import itertools
+    cycle = itertools.cycle(plt.rcParams['axes.prop_cycle'].by_key()['color'])
+    ordered = ([kv for kv in series.items() if kv[0] != 'ERA5']
+               + [kv for kv in series.items() if kv[0] == 'ERA5'])
+    for label, rows in ordered:
         hours = sorted(rows)
         draw(ax, [float(h) for h in hours],
              np.array([rows[h]['lon'] for h in hours]),
              np.array([rows[h]['lat'] for h in hours]),
-             'k' if label == 'ERA5' else colour, label)
+             'k' if label == 'ERA5' else next(cycle), label)
 
     lats = [r['lat'] for rows in series.values() for r in rows.values()]
     ax.set_aspect(1.0 / np.cos(np.deg2rad(np.mean(lats))))
