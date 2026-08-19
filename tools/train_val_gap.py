@@ -189,21 +189,24 @@ def curves_timed(run_dir):
     # against validation loss draws an eighty-hour flat line and makes the
     # wall-clock panel useless for exactly the runs that needed rescuing.
     #
-    # Any jump longer than `idle_gap` is treated as downtime and subtracted, so
-    # the axis becomes compute time. The total removed is returned rather than
-    # hidden, because a run that needed six hours of requeueing is worth knowing
-    # about even though the number does not belong on the x-axis.
-    order = sorted(wall)
+    # Walk in TIME order, not step order. A first version sorted by step and
+    # produced negative hours: the two event files of a resumed run overlap in
+    # step, merging keeps the later file's value for a shared step, and the
+    # resulting step-ordered times are not monotonic - so the gap detector fired
+    # on a rise that was really a return, and subtracted more than the run took.
+    # Wall time is monotonic by construction whatever the steps do.
+    order = sorted(wall, key=lambda k: wall[k])
     removed = 0.0
-    prev = wall[order[0]]
     shift = 0.0
+    prev = wall[order[0]]
+    base = wall[order[0]]
     fixed = {}
     for k in order:
         w = wall[k]
         if w - prev > IDLE_GAP_S:
             shift += w - prev
             removed += w - prev
-        fixed[k] = (w - t0 - shift) / 3600.0
+        fixed[k] = max(0.0, (w - base - shift)) / 3600.0
         prev = w
     return merged, fixed, files, removed / 3600.0
 
