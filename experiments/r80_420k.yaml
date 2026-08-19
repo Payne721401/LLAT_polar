@@ -1,0 +1,100 @@
+# Experiment F - the best grid so far, on four times the schedule.
+#
+#   sbatch --export=ALL,SAVE_TOP_K=10,FRESH=1,RUNDIR=runs/r80_420k,OVERLAY=experiments/r80_420k.yaml \
+#          job_scripts/train_h200.sh
+#
+# t360_r80's grid at 420,000 steps instead of 105,000. The grid is unchanged and
+# only the schedule moves, so this reads against runs/t360_r80 as "same model,
+# four times the training".
+#
+# ── Why the schedule and not the architecture ───────────────────────────
+#     run           steps    tokens    patch_r     val      gap    season 24 h
+#     cartesian     1600k      3528    1.00 deg      -        -        77 km
+#     t360           105k      4800    1.00       0.24172  12.5 %      129
+#     pr2            105k      9600    0.50       0.23354  10.6 %        -
+#     r80            105k      9600    0.50       0.22766  11.9 %        -
+#     t360_long      210k      4800    1.00       0.22587  22.5 %       75
+#
+# Four architectures at 105,000 steps span 0.2277 to 0.2456. One doubling of the
+# schedule, on the WORST of those grids, spans 0.2417 to 0.2259 - a larger move
+# than every architecture change put together, and it carried through to a 42 %
+# cut in the season's median 24 h position error.
+#
+# The Cartesian model makes the same point from the other side: it has the
+# COARSEST tokenisation here, 3,528 tokens against t360's 4,800 and r80's 9,600,
+# and a 1.00 deg radial patch, and it is still the best of them. What it has is
+# 1,600,000 steps. Nothing measured so far says the polar grid needs finer
+# tokens; everything measured says it needs more training.
+#
+# 420,000 is still under a third of the Cartesian budget.
+#
+# ── Three independent reasons to expect more, not diminishing returns ───
+#   1. No run has turned over. Best validation sits at 90-98 % of the way
+#      through every one of them, and t360_long's was still falling 1.2 % over
+#      its final half.
+#   2. The out-of-sample season improved in proportion, which is what settles
+#      whether a validation gain is real - t360_long's train/val gap doubled to
+#      22.5 % and the season still improved 42 %.
+#   3. The outer-disc patch texture visibly reduced with the longer run.
+#
+# The third one retracts a prediction recorded in t360_long.yaml, that longer
+# training would NOT remove the texture because an unweighted L1 over 98
+# channels does not penalise a percent-level ripple. That was wrong, and the
+# mechanism was wrong with it: the blocks were not the loss failing to care,
+# they were the model not yet having learned consistent representations across
+# patches in the region it is least constrained. Undertraining, not structure.
+# Quantify it on this checkpoint with tools/polar_seam.py rather than by eye -
+# both dumps in standalone mode, or the coupling paints over the answer.
+#
+# ── Cost, and the one thing to check before submitting ──────────────────
+# r80 took 7 h 30 m for 105,000 steps on 8 H200s, and the measured scaling has
+# been close to linear in steps, so expect ABOUT 30 HOURS.
+#
+# CHECK THE WALLTIME LIMIT AND WHETHER REQUEUE IS ALLOWED:
+#
+#     sinfo -o "%P %l"
+#     scontrol show partition | grep -iE "maxtime|requeue"
+#
+# max_steps defines the cosine annealing curve. A job killed at the walltime
+# leaves a learning rate that never finished annealing, and the result compares
+# to nothing - worse than not having run it. If requeue is allowed the run
+# survives being killed, and the resume path is exercised and working since
+# train.py started allowlisting numpy scalars; if the partition sets
+# --no-requeue, pick a step count that fits inside the limit instead of hoping.
+#
+# SAVE_TOP_K=10 rather than the default 30: thirty checkpoints at 305 MB is
+# 9.2 GB, and a full quota truncates one mid-write, which is how job 257976 died
+# after forty-seven minutes of healthy training.
+#
+# ── What this is and is not comparable to ───────────────────────────────
+# Against runs/t360_r80: the schedule alone.
+# Against runs/t360_long: neither - the grid AND the schedule differ. The clean
+#   grid comparison at matched steps already exists, r80 against t360 at 105,000.
+# Against the Cartesian model: still not matched, and still the largest
+#   unbalanced variable in every comparison made so far.
+
+trainer:
+  # 105,000 -> 420,000. Warmup stays at 1,000: it exists to get past the
+  # unstable first epochs and that job does not grow with the run.
+  max_steps: 420000
+
+data:
+  data_spatial_shape: [13, 80, 360]
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  # dr = 10/80 = 0.125 deg, so one radial patch spans 4 x 0.125 = 0.50 deg,
+  # about 56 km. The radius of maximum wind is 0.3-0.5 deg, so the eyewall is
+  # no longer swallowed whole by a single patch - which it was at t360's 1.00.
+  # Going further, to patch_r = 2, would give 0.25 deg, exactly one ERA5 cell,
+  # and there is nothing below that in this data to resolve.
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  # 30, so one coarse window still holds the whole circle. A window size is a
+  # token count, not a distance; see experiments/p1_theta360.yaml.
+  window_shape2: [2, 5, 30]
+  optimizer_args:
+    # Unchanged. The Cartesian model uses 4e-4, eight times this, and that is
+    # the other half of the budget difference - worth testing, but not in the
+    # same run as a fourfold schedule change.
+    lr: 0.00005
