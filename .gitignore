@@ -63,3 +63,6 @@ analysis/*.md
 analysis/*.csv
 analysis/*.png
 analysis/figures/
+
+# Personal command scratchpad, not documentation - see tool docstrings.
+COMMANDS.md
