@@ -99,9 +99,12 @@ def read_events(path):
             break                                   # truncated tail
         rec, i = blob[i:i + length], i + length + 4
         step = None
+        wall = None
         summaries = []
         for num, _wire, val in _fields(rec):
-            if num == 2:                            # Event.step
+            if num == 1:                            # Event.wall_time, a double
+                wall = struct.unpack('<d', val)[0]
+            elif num == 2:                          # Event.step
                 step = val
             elif num == 5:                          # Event.summary
                 summaries.append(val)
@@ -119,7 +122,7 @@ def read_events(path):
                     elif vn == 2:                   # Value.simple_value
                         simple = struct.unpack("<f", vv)[0]
                 if tag is not None and simple is not None:
-                    out.append((tag, step, simple))
+                    out.append((tag, step, simple, wall))
     return out
 
 
@@ -140,9 +143,40 @@ def curves(run_dir):
             f"remember the logs are the ones the trainer wrote, not job_logs/.")
     merged = {}
     for f in files:
-        for tag, step, val in read_events(f):
+        for tag, step, val, _wall in read_events(f):
             merged.setdefault(tag, {})[step] = val
     return merged, files
+
+
+def curves_timed(run_dir):
+    """As curves(), plus the wall-clock second each point was written at.
+
+    Every TFRecord event carries a wall_time, which is the only elapsed-time
+    signal in the file: train.py logs elapsed_time_hours with logger=False, so
+    it never reaches the event log at all. Times are made relative to the first
+    event of the run, and a resume shows up as a jump - the gap between the two
+    jobs is real elapsed time but not compute, so it is reported rather than
+    silently included.
+    """
+    import glob as _glob
+
+    pats = (os.path.join(run_dir, "**", "events.out.tfevents.*"),
+            os.path.join(run_dir, "events.out.tfevents.*"))
+    files = sorted({f for p in pats for f in _glob.glob(p, recursive=True)},
+                   key=os.path.getmtime)
+    if not files:
+        raise FileNotFoundError(f"no events.out.tfevents.* under {run_dir}")
+    merged, wall = {}, {}
+    t0 = None
+    for f in files:
+        for tag, step, val, w in read_events(f):
+            merged.setdefault(tag, {})[step] = val
+            if w is not None:
+                t0 = w if t0 is None else min(t0, w)
+                wall[step] = w
+    if t0 is not None:
+        wall = {k: (v - t0) / 3600.0 for k, v in wall.items()}
+    return merged, wall, files
 
 
 def pick(merged, keys):
