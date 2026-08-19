@@ -130,7 +130,9 @@ def main(args):
         lo, hi = (float(x) for x in args.ylim.split(','))
         ax[0].set_ylim(lo, hi), ax[1].set_ylim(lo, hi)
 
-    out = os.path.expanduser(args.out)
+    out = os.path.expanduser(args.out or os.path.join(
+        "analysis", "figures", "training",
+        "curves_" + "_".join(l.replace('/', '-') for l, _ in runs) + ".png"))
     os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
     fig.tight_layout()
     fig.savefig(out, dpi=140)
@@ -149,5 +151,9 @@ if __name__ == "__main__":
                         "thirds of the y-range and flattens everything else")
     p.add_argument("--ylim", default=None, metavar="LO,HI",
                    help="e.g. 0.22,0.27 to zoom on the converged region")
-    p.add_argument("--out", default="analysis/figures/training/curves.png")
+    p.add_argument("--out", default=None,
+                   help="defaults to analysis/figures/training/curves_<labels>"
+                        ".png, named after the runs being compared. A fixed "
+                        "default overwrites the previous comparison without "
+                        "saying so")
     main(p.parse_args())

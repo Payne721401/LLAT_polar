@@ -84,6 +84,43 @@ def main(args):
         label, _, path = spec.partition('=')
         dumps.append((label or os.path.basename(path.rstrip('/')), path or spec))
 
+    # What produced each dump, from the file run_coupled_forecast leaves beside
+    # it. Without this the only evidence is a directory name, and the mistake it
+    # guards against is invisible: a one-way dump has everything outside
+    # --boundary-radius replaced by FCNV2, so its outer disc shows the global
+    # model rather than this one, and a mixed pair measures whether the coupling
+    # covers the artefact instead of whether the model stopped making it.
+    modes = {}
+    for label, path in dumps:
+        mp = os.path.join(os.path.expanduser(path), 'dump_meta.yaml')
+        if not os.path.exists(mp):
+            modes[label] = None
+            print(f"{label:<14} no dump_meta.yaml - made before it was written; "
+                  f"check the mode by hand")
+            continue
+        import yaml
+        with open(mp, encoding='utf-8') as f:
+            meta = yaml.safe_load(f) or {}
+        modes[label] = meta.get('mode', '?')
+        print(f"{label:<14} mode {modes[label]}, "
+              f"{os.path.basename(str(meta.get('model_yaml')))}, "
+              f"boundary {meta.get('boundary_radius')} deg")
+
+    seen = {m for m in modes.values() if m}
+    if len(seen) > 1 and not args.allow_mixed_modes:
+        raise SystemExit(
+            "\nthese dumps were made in different modes: "
+            + ", ".join(f"{k}={v}" for k, v in modes.items())
+            + "\nA one-way run has everything outside --boundary-radius replaced"
+              "\nby FCNV2, so its outer disc is not this model's output at all."
+              "\nRerun the odd one with --mode standalone, or pass"
+              "\n--allow-mixed-modes if the cross-mode comparison is the point.")
+    if seen == {'one-way'}:
+        print("\n  WARNING: every dump is one-way, so the outer disc is FCNV2's"
+              "\n  output and any artefact the model makes there was overwritten"
+              "\n  before it was saved. Use --mode standalone to see it.")
+    print()
+
     vi = SFC.index(args.var) if args.var in SFC else int(args.var)
     profiles, fields = {}, {}
     R = None
@@ -145,6 +182,11 @@ def main(args):
             print("it - the model produces this on its own and the fix is in")
             print("training or in the tokenisation, not in the exchange.")
 
+    if args.out is None:
+        args.out = os.path.join(
+            "analysis", "figures", "transform",
+            "seam_" + "_vs_".join(l.replace('/', '-') for l, _ in dumps)
+            + f"_{args.var}.png")
     if args.out:
         import matplotlib
         matplotlib.use('Agg')
@@ -187,5 +229,12 @@ if __name__ == "__main__":
                    help="must match the run's --boundary-radius")
     p.add_argument("--r-max", type=float, default=10.0,
                    help="the model card's polar.r_degree_max")
-    p.add_argument("--out", default="analysis/figures/transform/polar_seam.png")
+    p.add_argument("--allow-mixed-modes", action="store_true",
+                   help="compare a standalone dump against a one-way one. That "
+                        "measures whether the coupling covers the artefact, "
+                        "which is not whether the model stopped making it")
+    p.add_argument("--out", default=None,
+                   help="defaults to analysis/figures/transform/seam_<labels>_"
+                        "<var>.png. A fixed default meant every run overwrote "
+                        "the last one, and the loss was silent")
     main(p.parse_args())

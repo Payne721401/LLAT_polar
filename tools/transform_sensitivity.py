@@ -174,6 +174,12 @@ def main(args):
               f"almost all\nsmall-scale structure, with nothing smooth for "
               f"bilinear sampling to\nhold on to - the opposite of msl.")
 
+    if args.out is None:
+        args.out = os.path.join(
+            "analysis", "figures", "transform",
+            f"sensitivity_R{args.R}_T{args.Theta}_L{args.level}"
+            + ("_rot" if args.rotate else "")
+            + ("_square" if args.square else "") + ".png")
     if not args.out:
         return
     import matplotlib
@@ -269,5 +275,8 @@ if __name__ == "__main__":
                         "polar grid does not represent at all - the largest "
                         "single thing it costs, and invisible when both columns "
                         "are masked to the disc")
-    p.add_argument("--out", default="analysis/figures/transform/sensitivity.png")
+    p.add_argument("--out", default=None,
+                   help="defaults to a name carrying R, Theta, the level and "
+                        "whether --rotate was used, so the t180 and t360 runs "
+                        "do not overwrite each other")
     main(p.parse_args())

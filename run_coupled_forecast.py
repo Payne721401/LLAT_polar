@@ -324,6 +324,21 @@ def main(args):
     llat.initialize()
     llat.dump_polar = (os.path.expanduser(args.dump_polar)
                        if args.dump_polar else None)
+    if llat.dump_polar:
+        # Record what produced the dump, next to it. A one-way dump has
+        # everything outside --boundary-radius overwritten by FCNV2, so
+        # comparing one against a standalone dump compares the coupling with the
+        # model and silently answers the wrong question. polar_seam reads this
+        # and refuses the mixture rather than trusting the directory name.
+        import yaml as _y
+        os.makedirs(llat.dump_polar, exist_ok=True)
+        with open(os.path.join(llat.dump_polar, 'dump_meta.yaml'), 'w',
+                  encoding='utf-8') as _f:
+            _y.safe_dump(dict(mode=args.mode, model_yaml=args.model_yaml,
+                              tc_id=args.tc_id, start=args.start,
+                              boundary_radius=args.boundary_radius,
+                              hold_radius=args.hold_radius), _f,
+                         sort_keys=False)
     info = coupling_info(llat)
 
     if not standalone:
