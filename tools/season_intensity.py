@@ -221,43 +221,79 @@ def draw(curves, runs, args):
         "analysis", "figures", "season",
         "intensity_" + "_".join(l.replace('/', '-') for l, _ in runs) + ".png"))
 
-    fig, ax = plt.subplots(1, 4, figsize=(19, 4.4))
-    for label, _ in runs:
+    def band(a_, hs, samples, colour, label, min_n=1):
+        """One series in season_stats' convention: median, IQR, mean.
+
+        Solid median, shaded interquartile range, dashed mean. The median is the
+        headline because a season of forecasts is not normally distributed - two
+        storms that went badly wrong drag a mean a long way - and where the
+        dashed line separates from the solid one, a few cases are carrying it.
+        Drawn nowhere the sample falls below min_n, since a median over two
+        cases is a number rather than a statistic.
+        """
+        med, lo, hi, mean = [], [], [], []
+        for s in samples:
+            s = s[np.isfinite(s)]
+            if len(s) < min_n:
+                med.append(np.nan), lo.append(np.nan)
+                hi.append(np.nan), mean.append(np.nan)
+                continue
+            med.append(np.median(s)), mean.append(np.mean(s))
+            lo.append(np.percentile(s, 25)), hi.append(np.percentile(s, 75))
+        ln, = a_.plot(hs, med, '-o', ms=3, color=colour, label=label)
+        a_.plot(hs, mean, '--', color=ln.get_color(), lw=1.0)
+        a_.fill_between(hs, lo, hi, color=ln.get_color(), alpha=0.13, lw=0)
+        return ln.get_color()
+
+    fig, ax = plt.subplots(2, 4, figsize=(19, 8.6), squeeze=False)
+    colours = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    for (label, _), c in zip(runs, colours * 4):
         rows = curves.get(label) or {}
         hs = sorted(h for h in rows if h % args.every == 0)
         if not hs:
             continue
         a = {h: np.array(rows[h], dtype=float) for h in hs}
-        mae = [np.nanmean(np.abs(a[h][:, 0])) for h in hs]
-        bias = [np.nanmean(a[h][:, 0]) for h in hs]
-        wmae = [np.nanmean(np.abs(a[h][:, 1])) for h in hs]
-        ngood = [int((a[h][:, 2] <= args.max_track_error).sum()) for h in hs]
-        # The good-track series is drawn dashed and only where enough cases
-        # survive to mean anything; below that it is one or two storms.
-        gmae = [np.nanmean(np.abs(a[h][a[h][:, 2] <= args.max_track_error, 0]))
-                if (a[h][:, 2] <= args.max_track_error).sum() >= args.min_good
-                else np.nan for h in hs]
-        ln, = ax[0].plot(hs, mae, '-o', ms=3, label=label)
-        ax[0].plot(hs, gmae, '--', color=ln.get_color(), lw=1.2)
-        ax[1].plot(hs, bias, '-o', ms=3, color=ln.get_color(), label=label)
-        ax[2].plot(hs, wmae, '-o', ms=3, color=ln.get_color(), label=label)
-        ax[3].plot(hs, ngood, '-o', ms=3, color=ln.get_color(), label=label)
+        good = {h: a[h][a[h][:, 2] <= args.max_track_error] for h in hs}
 
-    ax[0].set_title(f"MSLP mean absolute error\nsolid all cases, dashed track "
-                    f"< {args.max_track_error:.0f} km")
-    ax[0].set_ylabel("hPa")
-    ax[1].set_title("MSLP bias (forecast - ERA5)\nnegative means too deep")
-    ax[1].set_ylabel("hPa")
-    ax[1].axhline(0, color='0.5', lw=0.8)
-    ax[2].set_title("10 m wind mean absolute error")
-    ax[2].set_ylabel("m s$^{-1}$")
-    ax[3].set_title(f"cases within {args.max_track_error:.0f} km\n"
-                    f"track skill, and how far the dashed lines can be trusted")
-    ax[3].set_ylabel("cases")
-    for a_ in ax:
-        a_.set_xlabel("forecast hour")
-        a_.grid(alpha=0.3)
-        a_.legend(fontsize=8)
+        # Top row: every case. Bottom row: only those looking at roughly the
+        # right storm, which is the row that answers "can it forecast
+        # intensity" rather than "did it go to the right place".
+        band(ax[0][0], hs, [np.abs(a[h][:, 0]) for h in hs], c, label)
+        band(ax[0][1], hs, [a[h][:, 0] for h in hs], c, label)
+        band(ax[0][2], hs, [np.abs(a[h][:, 1]) for h in hs], c, label)
+        ax[0][3].plot(hs, [len(a[h]) for h in hs], '-o', ms=3, color=c,
+                      label=label)
+
+        band(ax[1][0], hs, [np.abs(good[h][:, 0]) for h in hs], c, label,
+             args.min_good)
+        band(ax[1][1], hs, [good[h][:, 0] for h in hs], c, label, args.min_good)
+        band(ax[1][2], hs, [np.abs(good[h][:, 1]) for h in hs], c, label,
+             args.min_good)
+        ax[1][3].plot(hs, [len(good[h]) for h in hs], '-o', ms=3, color=c,
+                      label=label)
+
+    ax[0][0].set_title("MSLP absolute error — all cases\nsolid median, shaded "
+                       "IQR, dashed mean")
+    ax[0][1].set_title("MSLP bias (forecast - ERA5)\nnegative means too deep")
+    ax[0][2].set_title("10 m wind absolute error")
+    ax[0][3].set_title("cases contributing\nstorms end, and the survivors are "
+                       "not a random subset")
+    ax[1][0].set_title(f"MSLP absolute error — track < "
+                       f"{args.max_track_error:.0f} km\nintensity skill, with "
+                       f"the track error held aside")
+    ax[1][1].set_title(f"MSLP bias — track < {args.max_track_error:.0f} km")
+    ax[1][2].set_title(f"10 m wind error — track < "
+                       f"{args.max_track_error:.0f} km")
+    ax[1][3].set_title(f"cases within {args.max_track_error:.0f} km\n"
+                       f"track skill, and how far this row can be trusted")
+    for r in (0, 1):
+        ax[r][0].set_ylabel("hPa"), ax[r][1].set_ylabel("hPa")
+        ax[r][2].set_ylabel("m s$^{-1}$"), ax[r][3].set_ylabel("cases")
+        ax[r][1].axhline(0, color='0.5', lw=0.8)
+        for a_ in ax[r]:
+            a_.set_xlabel("forecast hour")
+            a_.grid(alpha=0.3)
+            a_.legend(fontsize=8)
 
     os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
     fig.tight_layout()
