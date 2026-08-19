@@ -46,14 +46,23 @@ SFC = ['u10', 'v10', 't2m', 'd2m', 'msl', 'sp', 'tcwv', 'tp', 'mtnlwrf',
 UPPER = ['u', 'v', 't', 'q', 'z', 'w']
 
 
+_META_NOTED = set()
+
+
 def read_meta(run_dir):
     """Channel layout for a run, from its run_meta.yaml when there is one."""
     import yaml
 
     p = os.path.join(os.path.expanduser(run_dir), 'run_meta.yaml')
     if not os.path.exists(p):
-        print(f"  note: {os.path.basename(run_dir)} has no run_meta.yaml, "
-              "assuming the default channel order")
+        # Once per parent directory, not once per case. A season sweep opens
+        # eighty of these and eighty identical notices bury the table they are
+        # meant to preface.
+        parent = os.path.dirname(os.path.abspath(os.path.expanduser(run_dir)))
+        if parent not in _META_NOTED:
+            _META_NOTED.add(parent)
+            print(f"  note: runs under {os.path.basename(parent)} have no "
+                  f"run_meta.yaml, assuming the default channel order")
         return dict(surface_vars=SFC, upper_vars=UPPER, pressure_levels=LEVELS)
     with open(p, encoding='utf-8') as f:
         m = yaml.safe_load(f)

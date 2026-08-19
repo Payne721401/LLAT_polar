@@ -113,6 +113,7 @@ def collect(run_dir, era5_dir, tc_id, init_str, args):
 
 
 def main(args):
+    curves = {}
     era5_root = os.path.expanduser(args.era5_root)
     runs = []
     for spec in args.runs:
@@ -148,6 +149,7 @@ def main(args):
             if args.print_every and (i + 1) % args.print_every == 0:
                 print(f"    {label}: {i + 1}/{len(cases)}", flush=True)
 
+        curves[label] = rows
         print(f"\n===== {label} — {len(cases)} cases =====")
         print(f"{'lead':>5}{'n':>5}{'MSLP bias':>11}{'MSLP MAE':>10}"
               f"{'wind bias':>11}{'wind MAE':>10}"
@@ -198,6 +200,70 @@ def main(args):
                       f"few to separate\n  intensity skill from track error at "
                       f"this lead.")
 
+    draw(curves, runs, args)
+
+
+def draw(curves, runs, args):
+    """Four panels, the fourth of which is not about intensity at all.
+
+    MAE, bias and wind are the intensity result. The count of cases inside
+    --max-track-error is a track-skill measure that comes free with the same
+    pass, and it is the panel that carries the season's clearest signal:
+    t360_long keeps 72 of 81 cases inside 200 km at +24 h against the baseline's
+    53. It also says how far each of the other panels can be trusted - a
+    good-track statistic computed over two cases is not a statistic.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    out = os.path.expanduser(args.out or os.path.join(
+        "analysis", "figures", "season",
+        "intensity_" + "_".join(l.replace('/', '-') for l, _ in runs) + ".png"))
+
+    fig, ax = plt.subplots(1, 4, figsize=(19, 4.4))
+    for label, _ in runs:
+        rows = curves.get(label) or {}
+        hs = sorted(h for h in rows if h % args.every == 0)
+        if not hs:
+            continue
+        a = {h: np.array(rows[h], dtype=float) for h in hs}
+        mae = [np.nanmean(np.abs(a[h][:, 0])) for h in hs]
+        bias = [np.nanmean(a[h][:, 0]) for h in hs]
+        wmae = [np.nanmean(np.abs(a[h][:, 1])) for h in hs]
+        ngood = [int((a[h][:, 2] <= args.max_track_error).sum()) for h in hs]
+        # The good-track series is drawn dashed and only where enough cases
+        # survive to mean anything; below that it is one or two storms.
+        gmae = [np.nanmean(np.abs(a[h][a[h][:, 2] <= args.max_track_error, 0]))
+                if (a[h][:, 2] <= args.max_track_error).sum() >= args.min_good
+                else np.nan for h in hs]
+        ln, = ax[0].plot(hs, mae, '-o', ms=3, label=label)
+        ax[0].plot(hs, gmae, '--', color=ln.get_color(), lw=1.2)
+        ax[1].plot(hs, bias, '-o', ms=3, color=ln.get_color(), label=label)
+        ax[2].plot(hs, wmae, '-o', ms=3, color=ln.get_color(), label=label)
+        ax[3].plot(hs, ngood, '-o', ms=3, color=ln.get_color(), label=label)
+
+    ax[0].set_title(f"MSLP mean absolute error\nsolid all cases, dashed track "
+                    f"< {args.max_track_error:.0f} km")
+    ax[0].set_ylabel("hPa")
+    ax[1].set_title("MSLP bias (forecast - ERA5)\nnegative means too deep")
+    ax[1].set_ylabel("hPa")
+    ax[1].axhline(0, color='0.5', lw=0.8)
+    ax[2].set_title("10 m wind mean absolute error")
+    ax[2].set_ylabel("m s$^{-1}$")
+    ax[3].set_title(f"cases within {args.max_track_error:.0f} km\n"
+                    f"track skill, and how far the dashed lines can be trusted")
+    ax[3].set_ylabel("cases")
+    for a_ in ax:
+        a_.set_xlabel("forecast hour")
+        a_.grid(alpha=0.3)
+        a_.legend(fontsize=8)
+
+    os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out, dpi=140)
+    print(f"\nwrote {out}")
+
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(
@@ -221,4 +287,14 @@ if __name__ == "__main__":
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--unpaired", action="store_true")
     p.add_argument("--print-every", type=int, default=20)
+    p.add_argument("--min-good", type=int, default=8,
+                   help="do not draw the good-track curve where fewer cases "
+                        "than this survive the track filter; two storms is not "
+                        "a statistic and a line drawn through them reads as one")
+    p.add_argument("--out", default=None,
+                   help="figure path; defaults to analysis/figures/season/"
+                        "intensity_<labels>.png")
+    p.add_argument("--out", default=None,
+                   help="draw the comparison as well; defaults to "
+                        "analysis/figures/season/intensity_<labels>.png")
     main(p.parse_args())
