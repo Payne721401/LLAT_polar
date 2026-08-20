@@ -439,3 +439,29 @@ running job re-reads the config if it requeues.
 
 The partition's limit is 48 h (`#SBATCH --time=2-00:00:00`, partition `8gpus`),
 so a 30-hour run fits; `dev` is 4 h.
+
+### Sixteen GPUs buy 4 %, and the batch sweep had already said so
+
+2,000 steps, effective batch 32 both ways, `constant_warmup`:
+
+```
+ 8 GPUs x batch 4   469 s   0.235 s/step   (25a-hgpn032)
+16 GPUs x batch 2   452 s   0.226 s/step   (25a-hgpn016-017)   1.04x
+```
+
+The reason is in the sweep above: per-step time is 0.233 s at batch 1, 0.237 at
+2 and 0.255 at 4 — nearly flat, because below batch 4 a step is dominated by
+fixed cost, kernel launch and the gradient all-reduce, rather than by the work.
+The 16-GPU per-step of 0.226 s is essentially the single-node batch-2 figure of
+0.237. Crossing the interconnect cost almost nothing; there was simply nothing to
+gain, because halving the per-device batch moves each GPU further into the regime
+where the fixed cost dominates.
+
+**More devices only help when each one has enough work to amortise the per-step
+overhead.** Holding the effective batch fixed while doubling the devices
+guarantees the opposite. Sixteen GPUs at batch 4 each would be effective batch
+64, which is a different optimisation and not a speedup.
+
+`torch.compile` remains the only untried lever. The first attempt died in an
+Inductor kernel from symbolic-shape arithmetic; `dynamic=False` is the fix, since
+every shape here is a constant.
