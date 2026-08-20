@@ -465,3 +465,45 @@ guarantees the opposite. Sixteen GPUs at batch 4 each would be effective batch
 `torch.compile` remains the only untried lever. The first attempt died in an
 Inductor kernel from symbolic-shape arithmetic; `dynamic=False` is the fix, since
 every shape here is a constant.
+
+### torch.compile: inconclusive, and left off
+
+2,000 steps, same overlay, same effective batch:
+
+```
+plain     469 s
+compile   531 s     +13 %
+```
+
+Compilation time is inside that number and could not be separated. The progress
+bar is disabled, so there is no per-step rate in either the .out or the .err, and
+one run gives one equation for two unknowns. Two 4,000-step runs would solve it —
+`r = (t4000 - t2000)/2000` and `C = t2000 - 2000r` — and that is the experiment to
+run if anyone wants the answer. It was not run: the compute went to the model
+instead, which is the right call.
+
+**So: leave `COMPILE` unset.** It is not a demonstrated win, and at the only
+length measured it is a loss. `dynamic=False` is required if it is ever switched
+on again — see the comment in `models/lightning_modules.py`, where the first
+attempt died in an Inductor kernel from symbolic-shape arithmetic.
+
+### The ceiling is the dataset, not the hardware
+
+420,000 steps at 32 samples a step is 13.4 M sample presentations over 14,522
+samples: **925 epochs**, and validation was still falling. On a dataset this small
+against 24.6 M parameters, the gradient noise of a batch of 32 is plausibly doing
+regularisation work, which is a reason to be careful about raising the batch: a
+larger batch means a quieter gradient, less of that regularisation, and possibly
+worse generalisation. That is a hypothesis, but it is consistent with the 24 % gap
+and with the model being data-limited.
+
+The directions that are not blocked by hardware:
+
+- **more years** — training is 2007-2017 only
+- **theta rotation as augmentation** — a roll of the array, free, and physically
+  exact on a TC-centred polar grid. Cheaper than anything else on this list and
+  unavailable to the Cartesian model.
+- **rollout fine-tuning** — more supervision from the same samples
+
+GraphCast and FourCastNet train on roughly 55,000 samples against this model's
+14,522. No amount of batch tuning or extra devices closes that.
