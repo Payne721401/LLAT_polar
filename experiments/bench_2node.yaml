@@ -1,0 +1,69 @@
+# The 16-GPU half of the scaling test. Pairs with experiments/bench_long.yaml.
+#
+#   sed -e 's/^#SBATCH --nodes=1/#SBATCH --nodes=2/' #       -e 's/^srun -n 8 /srun -n 16 /' #       job_scripts/train_h200.sh > job_scripts/train_h200_2node.sh
+#   chmod +x job_scripts/train_h200_2node.sh
+#
+#   sbatch --export=ALL,SAVE_TOP_K=1,FRESH=1,RUNDIR=runs/bench_16gpu,OVERLAY=experiments/bench_2node.yaml #          job_scripts/train_h200_2node.sh
+#
+# Compare its Elapsed against runs/bench_plain from bench_long.yaml. Same work,
+# same effective batch, twice the devices: a perfect result would be half the
+# time, and the gradient all-reduce now crosses the interconnect between two
+# nodes rather than staying inside one, so 1.3-1.7x is the realistic range.
+#
+# Original header follows.
+#
+# Throughput probe, 2,000 steps, for changes that cost time up front.
+#
+# bench_batch.yaml runs 600 steps, which is enough to compare batch sizes and
+# too few for torch.compile: compilation takes minutes and a 600-step run would
+# measure the compiler rather than the model. 2,000 steps at batch 4 is about
+# 8.5 minutes uncompiled, so a two-minute compile is visible but not dominant -
+# and the log's first-step timestamp says how much of the total it was.
+#
+# Constant learning rate, not cosine. max_steps defines the cosine curve, so an
+# annealing benchmark is comparing a schedule as well as a speed, and a probe
+# that is stopped early is worthless. Nothing here is meant to be a model.
+#
+# ── torch.compile ───────────────────────────────────────────────────────
+#   sbatch --export=ALL,SAVE_TOP_K=1,FRESH=1,RUNDIR=runs/bench_plain,OVERLAY=experiments/bench_long.yaml \
+#          job_scripts/train_h200.sh
+#   sbatch --export=ALL,COMPILE=1,SAVE_TOP_K=1,FRESH=1,RUNDIR=runs/bench_compile,OVERLAY=experiments/bench_long.yaml \
+#          job_scripts/train_h200.sh
+#
+#   sacct -j J1,J2 --format=JobID,JobName%14,State,Elapsed
+#   grep -m1 'compile' job_logs/job-J2.out          # did it actually apply?
+#
+# COMPILE=1 is read in PanguLightningModule.__init__ and falls back with a
+# message if torch.compile raises, so check that line before believing a
+# disappointing number - an uncompiled run and a run whose compile failed look
+# identical in sacct.
+#
+# ── 8 GPUs against 16 ───────────────────────────────────────────────────
+# Use experiments/bench_2node.yaml for the 16-GPU side, which sets num_nodes and
+# halves batch_size so the effective batch stays 32. Submitting the 16-GPU job
+# with this file instead would double the effective batch, and that is a
+# different experiment rather than a faster one.
+
+trainer:
+  # Lightning needs telling; the SBATCH directives alone do not reach it.
+  num_nodes: 2
+  max_steps: 2000
+  limit_val_batches: 2
+
+data:
+  # 2, not 4: sixteen devices at batch 2 is the same effective batch of 32 as
+  # eight at batch 4. Leaving it at 4 would double the effective batch, halve
+  # the per-sample learning rate and make this a different experiment rather
+  # than a faster one.
+  batch_size: 2
+  n_workers: 4
+  data_spatial_shape: [13, 80, 360]
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  lr_scheduler_name: constant_warmup
+  lr_scheduler_args:
+    warmup_steps: 200

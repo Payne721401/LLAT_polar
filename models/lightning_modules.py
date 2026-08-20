@@ -1,5 +1,6 @@
 from typing import Any, Optional
 
+import os
 import lightning as L
 import numpy as np
 import torch
@@ -72,6 +73,35 @@ class PanguLightningModule(L.LightningModule):
             residual=residual,
             res_conn_after_smooth=res_conn_after_smooth,
         )
+
+        # Opt-in kernel fusion, gated by an environment variable so that no
+        # existing run changes and no config needs editing:
+        #
+        #     sbatch --export=ALL,COMPILE=1,... job_scripts/train_h200.sh
+        #
+        # The GPUs sit at 41 % utilisation while idle for only 3 % of the time,
+        # and the batch sweep put throughput at a peak by 16 and falling - so
+        # they are busy with work that is too finely divided, not starved. This
+        # model is full of small reshapes and permutes for the window attention,
+        # each one a kernel launch whose overhead does not amortise. Fusing them
+        # is the one remaining lever that does not change the optimisation.
+        #
+        # Because it does not change the maths, a compiled run is directly
+        # comparable to an uncompiled one. What it does change is start-up:
+        # compilation costs minutes, which a 600-step benchmark cannot amortise.
+        # Use 2,000 steps to measure it.
+        #
+        # Failure here is not fatal. torch.compile can graph-break or raise on
+        # hand-written attention, and losing the speedup is better than losing
+        # the run, so it falls back with a message rather than propagating.
+        if os.environ.get("COMPILE"):
+            try:
+                mode = os.environ.get("COMPILE_MODE", "default")
+                self.model = torch.compile(self.model, mode=mode)
+                print(f"[compile] torch.compile(mode={mode!r}) applied")
+            except Exception as e:                       # noqa: BLE001
+                print(f"[compile] torch.compile failed, continuing uncompiled: "
+                      f"{type(e).__name__}: {e}")
 
         if upper_var_weights is None and surface_var_weights is None:
             self.weighted_loss = False
