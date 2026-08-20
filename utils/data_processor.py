@@ -20,6 +20,61 @@ core_count = mp.cpu_count() // 2
 land_data = xr.open_dataset(pathjoin(dirname(__file__), "land.nc"))
 
 
+# Sampling grids for latlon_to_polar, keyed by everything they depend on.
+#
+# The grid is a pure function of the geometry - R, Theta, r_max, the centre, the
+# Cartesian size - and none of that changes between samples. It was being rebuilt
+# on every call: two linspaces, an expand, a cos and a sin over R x Theta, the
+# normalisation and a stack. At R=80, Theta=360 that is 28,800 elements of
+# trigonometry, done twice per training sample (once for the upper air, once for
+# the surface) and once more per sample for the target, on the CPU inside the
+# dataloader worker.
+#
+# That matters here because the dataloader is the bottleneck: the GPUs were
+# sampled at roughly 30 % utilisation with 8.5 % of their memory used, which is
+# what waiting for CPU looks like. Nothing about the model was slow.
+#
+# Bounded in practice: one entry per (geometry, device, dtype) combination, and a
+# run uses one. The cache is per process, so each dataloader worker builds its
+# own once - which is what is wanted, since they cannot share tensors anyway.
+_GRID_CACHE: dict = {}
+
+
+def _sampling_grid(R, Theta, r_max, center_xy, X, Y, align_corners, device, dtype):
+    """The grid_sample grid for one polar geometry, built once and reused.
+
+    Returns (grid, r, theta_rad). The returned tensors are the cached ones, not
+    copies: callers must not modify them in place. latlon_to_polar does not - it
+    builds the degree version of theta with a multiply, which allocates.
+    """
+    key = (int(R), int(Theta), float(r_max), tuple(float(c) for c in center_xy),
+           int(X), int(Y), bool(align_corners), str(device), str(dtype))
+    hit = _GRID_CACHE.get(key)
+    if hit is not None:
+        return hit
+
+    cx, cy = center_xy
+    r = torch.linspace(0.0, float(r_max), R, device=device, dtype=dtype)
+    theta = torch.linspace(0.0, 2.0 * math.pi, Theta + 1,
+                           device=device, dtype=dtype)[:-1]
+
+    rr = r[:, None].expand(R, Theta)
+    tt = theta[None, :].expand(R, Theta)
+    xs = cx + rr * torch.cos(tt)
+    ys = cy + rr * torch.sin(tt)
+
+    if align_corners:
+        x_norm = 2.0 * (xs / (X - 1)) - 1.0
+        y_norm = 2.0 * (ys / (Y - 1)) - 1.0
+    else:
+        x_norm = 2.0 * ((xs + 0.5) / X) - 1.0
+        y_norm = 2.0 * ((ys + 0.5) / Y) - 1.0
+
+    grid = torch.stack([x_norm, y_norm], dim=-1).unsqueeze(0)  # (1,R,Theta,2)
+    _GRID_CACHE[key] = (grid, r, theta)
+    return grid, r, theta
+
+
 def latlon_to_polar(
     data: torch.Tensor,
     R: int = 201,                      # distence bins
@@ -51,30 +106,11 @@ def latlon_to_polar(
         raise ValueError(f"Expect 3D or 4D tensor, got shape={tuple(data.shape)}")
 
     device, dtype = data.device, data.dtype
-    cx, cy = center_xy
 
-    # r grid
-    r = torch.linspace(0.0, float(r_max), R, device=device, dtype=dtype)  # (R,)
-
-    # theta grid in [0,2pi)
-    theta = torch.linspace(0.0, 2.0 * math.pi, Theta + 1, device=device, dtype=dtype)[:-1]  # (Theta,)
-
-    rr = r[:, None].expand(R, Theta)       # (R,Theta)
-    tt = theta[None, :].expand(R, Theta)   # (R,Theta)
-
-    xs = cx + rr * torch.cos(tt)  # X/lon
-    ys = cy + rr * torch.sin(tt)  # Y/lat
-
-    if align_corners:
-        x_norm = 2.0 * (xs / (X - 1)) - 1.0
-        y_norm = 2.0 * (ys / (Y - 1)) - 1.0
-    else:
-        x_norm = 2.0 * ((xs + 0.5) / X) - 1.0
-        y_norm = 2.0 * ((ys + 0.5) / Y) - 1.0
-
-    # grid_sample wants (N,H_out,W_out,2); we'll use N=1 and pack A*V into channels
-    grid = torch.stack([x_norm, y_norm], dim=-1)          # (R,Theta,2)
-    grid = grid.unsqueeze(0)                               # (1,R,Theta,2)
+    # Built once per geometry and reused. grid is (1,R,Theta,2), which is what
+    # grid_sample wants with N=1 and A*V packed into the channels.
+    grid, r, theta = _sampling_grid(R, Theta, r_max, center_xy, X, Y,
+                                    align_corners, device, dtype)
 
     # input for grid_sample: (N, C, H=Y, W=X)
     # pack altitude+vars => C = A*V
