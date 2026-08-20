@@ -466,26 +466,35 @@ guarantees the opposite. Sixteen GPUs at batch 4 each would be effective batch
 Inductor kernel from symbolic-shape arithmetic; `dynamic=False` is the fix, since
 every shape here is a constant.
 
-### torch.compile: inconclusive, and left off
+### torch.compile: 2.3 %, inside the noise, left off
 
-2,000 steps, same overlay, same effective batch:
+Separated from the per-step wall_time in the event files rather than from
+sacct's total, which mixes in start-up. `train_loss_step` is logged every ~30
+steps and each event carries a wall_time, so the steady rate and the one-off
+compilation come apart:
 
 ```
-plain     469 s
-compile   531 s     +13 %
+          first interval   steady        logged span   sacct python
+plain         0.211         0.217 s/step     430 s         469 s
+compile       0.232         0.212 s/step     434 s         531 s
 ```
 
-Compilation time is inside that number and could not be separated. The progress
-bar is disabled, so there is no per-step rate in either the .out or the .err, and
-one run gives one equation for two unknowns. Two 4,000-step runs would solve it —
-`r = (t4000 - t2000)/2000` and `C = t2000 - 2000r` — and that is the experiment to
-run if anyone wants the answer. It was not run: the compute went to the model
-instead, which is the right call.
+Compilation costs about 58 s - the difference between each run's sacct total and
+its logged span, 97 s against 39 s - and it happens before the first logged
+event. Steady state is 2.3 % faster, which breaks even at 11,600 steps and would
+save roughly 35 minutes of a 25-hour run.
 
-**So: leave `COMPILE` unset.** It is not a demonstrated win, and at the only
-length measured it is a loss. `dynamic=False` is required if it is ever switched
-on again — see the comment in `models/lightning_modules.py`, where the first
-attempt died in an Inductor kernel from symbolic-shape arithmetic.
+**Not worth using.** The two jobs ran on different nodes, and node-to-node spread
+was measured at about 10 % elsewhere in this sweep, so 2.3 % is inside the noise
+and may not be an effect at all. Confirming it would mean running both in one
+allocation the way `job_scripts/sweep_batch.sh` does, and a 2.3 % ceiling does not
+justify that. `COMPILE` stays unset; `dynamic=False` is required if it is ever
+switched on, since the first attempt died in an Inductor kernel from
+symbolic-shape arithmetic.
+
+The method is worth keeping though: per-step timing lives in the event files
+whether or not the progress bar is on, and `train_val_gap.read_events` already
+returns it. Nothing needs rerunning to measure a step rate.
 
 ### The ceiling is the dataset, not the hardware
 
