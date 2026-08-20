@@ -105,6 +105,14 @@ def main(args):
         ax[0].plot(s, vv, '-', color=c, lw=1.4, label=label)
         if hh is not None:
             ax[1].plot(hh, vv, '-', color=c, lw=1.4, label=label)
+        # The classic single-run picture: training and validation on one axis.
+        # Off by default because with four runs it doubles the lines and the
+        # comparison stops being readable; with one run it is the whole point.
+        if args.train and tt is not None:
+            ax[0].plot(s, tt, ':', color=c, lw=1.2,
+                       label=f"{label} (train)")
+            if hh is not None:
+                ax[1].plot(hh, tt, ':', color=c, lw=1.2)
         if tt is not None:
             gap = 100.0 * (vv - tt) / tt
             ax[2].plot(s, gap, '-', color=c, lw=1.4, label=label)
@@ -148,6 +156,11 @@ if __name__ == "__main__":
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--run", action="append", required=True,
                    help="label=path to a run directory, repeatable")
+    p.add_argument("--train", action="store_true",
+                   help="also draw the training loss, dotted. With one --run "
+                        "this is the usual train-vs-validation picture; with "
+                        "several it doubles the lines and hides the comparison, "
+                        "which is why it is off by default")
     p.add_argument("--skip", type=float, default=0.05,
                    help="drop this fraction of the start. The warmup spans two "
                         "thirds of the y-range and flattens everything else")
