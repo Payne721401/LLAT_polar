@@ -1,0 +1,67 @@
+# Throughput probe: does a larger batch fill the GPU?
+#
+#   for B in 4 16 32 64; do
+#     sed "s/^  batch_size: .*/  batch_size: $B/" experiments/bench_batch.yaml \
+#         > experiments/_bb$B.yaml
+#     sbatch --export=ALL,SAVE_TOP_K=1,FRESH=1,RUNDIR=runs/bench_b$B,OVERLAY=experiments/_bb$B.yaml \
+#            job_scripts/train_h200.sh
+#   done
+#   sacct -j J1,J2,J3,J4 --format=JobID,JobName%14,State,Elapsed
+#
+# Compare SAMPLES per second, not steps per second: a step at batch 32 does eight
+# times the work of a step at batch 4, so steps/s falls even when the machine is
+# doing far more. samples/s = 600 * batch * 8 / Elapsed_seconds.
+#
+# THE MODELS ARE MEANINGLESS - 600 steps, the cosine never anneals. Delete
+# runs/bench_b* afterwards.
+#
+# ── Why batch and not workers ───────────────────────────────────────────
+# Sampled over five minutes of the real r80_420k job, 1,200 samples across eight
+# H200s:
+#
+#     gpu    mean   p50   p90   idle<5%   mem GB
+#       0     33%   32%   62%       11%     11.9
+#       1-7   ~42%  ~37%  ~68%       ~2%     12.0
+#     overall 41%                     3%
+#
+# Idle is 3 %. The GPUs are working 97 % of the time - they are NOT waiting for
+# data, which is what a starved dataloader looks like and which is what two
+# earlier guesses assumed. Both guesses were made before this was measured, and
+# both were wrong: it is not the polar resampling being slow on the CPU, and it
+# is not eighty workers oversubscribing twelve cores.
+#
+# Busy but only 41 % utilised, with 8.5 % of memory in use, is a different
+# problem: the kernels are too small. batch_size is 4 per device, and this model
+# is full of small reshapes and permutes for the window attention, so a large
+# share of the time goes into launching kernels rather than running them. A
+# bigger batch makes each kernel do more work for the same launch.
+#
+# Memory says there is room: 12 GB of 143.8. Batch 32 should land near 96 GB and
+# batch 64 will probably not fit - which is what this measures rather than
+# assumes.
+#
+# ── The catch, which is why this is a probe and not a change ────────────
+# batch_size alters the effective batch and therefore the optimisation, so a
+# training run at batch 32 is NOT comparable to r80_420k at batch 4 without also
+# thinking about the learning rate. This probe answers "how much faster", not
+# "should the next run use it". If the speedup is large, the next run pays for it
+# by being a fresh baseline rather than a continuation.
+#
+# n_workers is set to 4 here because dataloader_bench showed throughput flat from
+# four upward - 35.6 samples/s at four against 35.1 at twelve - so the extra
+# eight per rank were doing nothing either way.
+
+trainer:
+  max_steps: 600
+  limit_val_batches: 2
+
+data:
+  batch_size: 4
+  n_workers: 4
+  data_spatial_shape: [13, 80, 360]
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
