@@ -1,0 +1,62 @@
+# Throughput probe: does 8 DDP ranks x 10 workers oversubscribe 12 cores?
+#
+#   for W in 10 4 2 1; do
+#     sed "s/^  n_workers: .*/  n_workers: $W/" experiments/bench_workers.yaml > /tmp/bw$W.yaml
+#     sbatch --export=ALL,SAVE_TOP_K=1,FRESH=1,RUNDIR=runs/bench_w$W,OVERLAY=/tmp/bw$W.yaml \
+#            job_scripts/train_h200.sh
+#   done
+#
+# THE MODEL THIS PRODUCES IS MEANINGLESS. max_steps is 600, so the cosine never
+# anneals; the only output that matters is how long the job took. Read it from
+# `sacct -j JOBID --format=JobID,Elapsed` or from the it/s in the log, and delete
+# the run directories afterwards.
+#
+# ── What is being tested ────────────────────────────────────────────────
+# The GPUs sit near 30 % utilisation with 8.5 % of their memory used. The obvious
+# reading was that the polar resampling is too slow on the CPU, and the obvious
+# fix was to move it to the GPU. tools/dataloader_bench.py says otherwise:
+#
+#     n_workers      2      4      8     10     12
+#     samples/s   18.8   35.6   31.5   31.6   35.1
+#
+# It stops improving after four workers. A CPU-bound transform would keep
+# scaling; this does not. And the per-batch distribution is a median of 7-52 ms
+# with a maximum over 1,100 - most batches arrive instantly from the prefetch
+# queue and a few wait a full second, which is the shape of file I/O on a shared
+# filesystem, not of arithmetic.
+#
+# One dataloader alone reaches 30 samples/s against the 16 a single rank needs
+# (batch 4 at 3.9 steps/s). So a dataloader is fast enough on its own. What
+# training does is run EIGHT of them, each with n_workers: 10, which is eighty
+# worker processes on twelve cores - a factor of 6.7 oversubscribed, where each
+# worker gets a seventh of a core and the context switching costs more than the
+# work.
+#
+# config.yaml's own comment says "worker 太少會讓 GPU 空等". That is right for one
+# process and backwards for eight.
+#
+# ── This is a hypothesis, and it is cheap to be wrong about ─────────────
+# Two short jobs settle it. If steps/s rises as n_workers falls, the
+# oversubscription was real and the fix is one line and free - worker count does
+# not touch the optimisation, so nothing about the comparison to previous runs
+# changes. If it does not rise, the next thing to try is `fast_dir`, which
+# unpacks the dataset to /dev/shm and is already implemented and commented out in
+# config.yaml.
+#
+# Do NOT edit config.yaml to test this. r80_420k is running, and if it requeues
+# it re-reads the config; changing n_workers there would alter a job already
+# 44 % through.
+
+trainer:
+  max_steps: 600
+  limit_val_batches: 2
+
+data:
+  n_workers: 10
+  data_spatial_shape: [13, 80, 360]
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
