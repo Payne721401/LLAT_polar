@@ -381,3 +381,61 @@ near 9.2 GB, so run one at a time.
 `DLAMPty_inference.py:341` raises without a `polar:` block, and the boundary geometries are
 irreducibly different (see Invariants). Merging the pipelines would hide the difference
 rather than control for it.
+
+## Throughput, measured 2026-08-21
+
+Three guesses about why the GPUs sit at 41 % utilisation were made before
+anything was measured, and all three were wrong. Recorded so they are not made
+again.
+
+| guess | how it died |
+|---|---|
+| the polar resampling is too slow on the CPU | `tools/dataloader_bench.py`: throughput flat from 4 workers up, 35.6 samples/s against 35.1 at twelve. A CPU-bound transform keeps scaling. |
+| eighty dataloader workers oversubscribe twelve cores | `--cpus-per-task=12` is **per task**, so eight ranks have 96 cores, not 12. And sampling the running job gave idle-below-5 % for only **3 %** of samples — the GPUs are working 97 % of the time, not waiting. |
+| the kernels are too small, so raise batch_size | measured, and it peaks at 16 then falls |
+
+The sweep, 600 steps on 8 H200s at R=80/Theta=360, job IDs verified against the
+`RunDir` line in each log rather than assumed from submission order:
+
+```
+batch    600 steps    per step    samples/s
+    1        140 s      0.233 s          34
+    2        142        0.237            68
+    4        153        0.255           125
+   16        410        0.683           187   <- throughput peak
+   32        860        1.43            179
+   64       1888        3.15            163
+```
+
+Below batch 4 the per-step time barely moves while the work quadruples, so a
+fixed per-step cost — kernel launch and the DDP all-reduce — dominates and the
+GPUs idle inside each step. Above 16 the step time grows superlinearly.
+
+**There is no free speedup available from batch size, worker count or the
+dataloader.** 41 % is what this model does on an H200: the window attention needs
+many small reshapes and permutes, and launch overhead does not amortise. The only
+untried lever is `torch.compile`, which fuses small ops and does not change the
+optimisation.
+
+What this does NOT settle is which batch size gives the best validation loss per
+wall-clock hour, which is the question that actually matters. Steps and samples
+pull opposite ways: batch 4 runs 12x more steps per hour than batch 64, batch 16
+consumes 1.5x more samples per hour than batch 4. Every run so far used batch 4
+and every gain came from more steps. Settle it with two jobs at equal `max_time`,
+not equal `max_steps`.
+
+Grid caching in `latlon_to_polar` is bitwise identical and not worth reporting as
+a speedup: 31.3 against 29.1 samples/s, one sample each, inside a benchmark whose
+own spread is +/- 15 %.
+
+### Short experiments do not anneal
+
+Exploration runs use `lr_scheduler_name: constant_warmup`. Only the final
+production run uses `cosine`. `max_steps` defines the cosine curve, so with
+annealing a job killed at the walltime leaves a rate that never finished decaying
+and a model comparable to nothing, and two runs of different lengths cannot be
+compared at the same step. Put it in the overlay, never in `config.yaml` — a
+running job re-reads the config if it requeues.
+
+The partition's limit is 48 h (`#SBATCH --time=2-00:00:00`, partition `8gpus`),
+so a 30-hour run fits; `dev` is 4 h.
