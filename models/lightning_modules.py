@@ -91,17 +91,30 @@ class PanguLightningModule(L.LightningModule):
         # compilation costs minutes, which a 600-step benchmark cannot amortise.
         # Use 2,000 steps to measure it.
         #
-        # Failure here is not fatal. torch.compile can graph-break or raise on
-        # hand-written attention, and losing the speedup is better than losing
-        # the run, so it falls back with a message rather than propagating.
+        # dynamic=False is not optional here. Job 285739 died at 1:20 with
+        # ZeroDivisionError inside an Inductor-generated kernel:
+        #
+        #   ps8 = 4800*s1*((s2//5)*(s2//5))*...*(1 // (4800*s1*...))
+        #   ZeroDivisionError: integer division or modulo by zero
+        #
+        # s0, s1, s2 are symbolic sizes. Left to guess, dynamo treats the shapes
+        # as dynamic and Inductor reasons symbolically about the window
+        # partitioning arithmetic, where a `1 // (something large)` becomes 0 and
+        # is then used as a divisor. Nothing about this model needs that: the
+        # grid is fixed by the config and the batch is fixed, so every shape is
+        # a constant and telling dynamo so removes the symbolic reasoning that
+        # produced the bad kernel.
+        #
+        # Note where it failed - inside the generated kernel at runtime, not
+        # while tracing. torch._dynamo.config.suppress_errors would NOT have
+        # caught it, and neither does a try/except around this call, because
+        # torch.compile is lazy and compiles on the first forward.
         if os.environ.get("COMPILE"):
-            try:
-                mode = os.environ.get("COMPILE_MODE", "default")
-                self.model = torch.compile(self.model, mode=mode)
-                print(f"[compile] torch.compile(mode={mode!r}) applied")
-            except Exception as e:                       # noqa: BLE001
-                print(f"[compile] torch.compile failed, continuing uncompiled: "
-                      f"{type(e).__name__}: {e}")
+            mode = os.environ.get("COMPILE_MODE", "default")
+            self.model = torch.compile(self.model, mode=mode, dynamic=False)
+            print(f"[compile] torch.compile(mode={mode!r}, dynamic=False) "
+                  f"wrapped; compilation happens on the first forward, so a "
+                  f"failure appears there and not here")
 
         if upper_var_weights is None and surface_var_weights is None:
             self.weighted_loss = False
