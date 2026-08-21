@@ -69,12 +69,13 @@ echo "logs in $LOGS"
 
 run_one() {
     tc="$1"
-    # Any start_from_* under this storm means the sweep already covered it.
-    if compgen -G "$OUT/$tc/"*"/start_from_"* > /dev/null 2>&1; then
-        echo "  $tc  already done, skipping"
-        return 0
-    fi
-    if python "$HERE/run_coupled_forecast.py" --tc-id "$tc" "${PASS[@]}" \
+    # No storm-level skip. It used to skip on the existence of ANY start_from_*,
+    # so a storm interrupted half way through looked finished for ever and its
+    # remaining initial times were never run - while deleting the directory to
+    # force a retry threw away the cases that had succeeded. --skip-done pushes
+    # the decision down to the individual initial time, where it belongs, and
+    # the per-case cost of finding nothing to do is one stat() call.
+    if python "$HERE/run_coupled_forecast.py" --tc-id "$tc" --skip-done "${PASS[@]}" \
             > "$LOGS/$tc.log" 2>&1; then
         echo "  $tc  ok"
     else

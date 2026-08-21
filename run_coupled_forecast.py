@@ -428,6 +428,19 @@ def main(args):
         t_start = time.time()
         base = os.path.join(run_root, f"start_from_{stamp}")
         llat_dir = os.path.join(base, 'DLAMPty', 'forecast')
+
+        # Resume at the initial time, not at the storm. A sweep that is killed
+        # part-way through a storm used to leave that storm looking finished to
+        # run_season.sh, which skips on the existence of any start_from_*, so
+        # the missing initial times were never filled in - and re-running with
+        # the directory deleted redid the ones that had succeeded. Checking for
+        # the final lead makes every case independently restartable: a partial
+        # storm resumes at the first case it has not finished.
+        done = os.path.join(llat_dir, f"output_sfc_{int(args.hours):0>3}h.npy")
+        if args.skip_done and os.path.exists(done):
+            print(f"=== {args.tc_id} IC {stamp}  already complete, "
+                  f"skipping ===", flush=True)
+            continue
         os.makedirs(llat_dir, exist_ok=True)
         write_run_meta(base, llat, args, initial_time)
         if not standalone:
@@ -560,6 +573,11 @@ if __name__ == "__main__":
                         "is one scalar. Writes to its own directory. A "
                         "measurement, not a fix")
     p.add_argument("--start-index", type=int, default=0)
+    p.add_argument("--skip-done", action="store_true",
+                   help="skip an initial time whose final lead is already on "
+                        "disk. Makes a sweep restartable per case rather than "
+                        "per storm, so a run killed half way through a storm "
+                        "resumes instead of redoing it")
     p.add_argument("--max-starts", type=int, default=0,
                    help="0 = every initial time; use 1 for a smoke test")
     a = p.parse_args()
