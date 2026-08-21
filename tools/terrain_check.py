@@ -75,6 +75,12 @@ def km_between(lon0, lat0, lon, lat):
     return np.hypot(dx, dy)
 
 
+def _nanmax(a):
+    """nanmax, or NaN for an empty or all-NaN slice, without the warning."""
+    a = a[np.isfinite(a)]
+    return float(a.max()) if a.size else float('nan')
+
+
 def probe(field, core_deg):
     """Land and terrain at the centre, near the centre, and nearest to it."""
     lm = np.asarray(field.s('landmask'), dtype=float)
@@ -96,8 +102,12 @@ def probe(field, core_deg):
         lon=clon, lat=clat,
         lm_centre=float(lm[i, j]),
         hgt_centre=float(hgt[i, j]),
-        lm_near=float(np.nanmax(lm[near])) if near.any() else np.nan,
-        hgt_near=float(np.nanmax(hgt[near])) if near.any() else np.nan,
+        # `near.any()` is not enough: an ERA5 file carries no hgt at all, so the
+        # slice is present but entirely NaN and nanmax warns once per lead -
+        # twenty-five identical RuntimeWarnings ahead of the table. Test for a
+        # finite value, which is the thing actually required.
+        lm_near=_nanmax(lm[near]),
+        hgt_near=_nanmax(hgt[near]),
         d_land=float(np.nanmin(d[land])) if land.any() else np.inf,
         land_lon=lon[land], land_lat=lat[land],
     )
