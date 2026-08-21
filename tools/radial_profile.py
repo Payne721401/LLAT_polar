@@ -145,6 +145,14 @@ def main(args):
             for rad in args.mark:
                 a.axvline(rad, ls=':', c='0.5', lw=1)
             a.grid(alpha=0.3)
+            # Beyond the polar disc only the corners of a Cartesian domain have
+            # data, so a "ring" out there is four 45-degree sectors rather than a
+            # ring, and its azimuthal mean and spread are not the same quantity
+            # as the ones inside. ERA5's MSLP spread climbing from 4 to 5.9 hPa
+            # between 10 and 14 degrees is mostly that sampling change, not
+            # weather. Cropping keeps the comparable region on screen.
+            if args.r_max:
+                a.set_xlim(0, args.r_max)
     axes[0][0].legend(fontsize=8)
 
     fig.suptitle(f"+{args.lead:03d} h — dotted lines: "
@@ -176,5 +184,10 @@ if __name__ == "__main__":
     p.add_argument("--out", default="radial.png")
     p.add_argument("--mark", type=float, nargs="*", default=[8.0, 9.0, 10.0],
                    help="radii to mark, in degrees; put your --hold-radius here")
+    p.add_argument("--r-max", type=float, default=10.0,
+                   help="crop the x axis here. Default 10, the polar disc "
+                        "radius: past it a Cartesian domain contributes only "
+                        "its four corners, so the curves stop being comparable "
+                        "with the ones inside. Pass 0 to show everything")
     p.add_argument("--dpi", type=int, default=150)
     main(p.parse_args())
