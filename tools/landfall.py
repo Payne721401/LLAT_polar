@@ -136,6 +136,11 @@ def main(args):
     want_b = args.truth in ("best", "both") and args.track_csv
     rows = []
     bt_cache = {}
+    # Separate reasons. The first version reported "no case had a truth
+    # landfall" when in fact every landfall was found and then dropped at the
+    # load step, because window was a float and 96 + 24.0 formats as "126.0" in
+    # output_sfc_126.0h.npy. A single counter cannot tell those apart.
+    n_land, n_short, n_loadfail = 0, 0, 0
 
     for n, (tc, init_s) in enumerate(common):
         if args.limit and n >= args.limit:
@@ -163,7 +168,11 @@ def main(args):
             if over_land(f, args.core_deg) > args.land_threshold:
                 t0 = h
                 break
-        if t0 is None or (t0 + args.window) > max(leads):
+        if t0 is None:
+            continue
+        n_land += 1
+        if (t0 + args.window) > max(leads):
+            n_short += 1
             continue
 
         rec = {"tc": tc, "init": init_s, "landfall_h": t0}
@@ -202,15 +211,23 @@ def main(args):
                 ok = False
         if ok:
             rows.append(rec)
+        else:
+            n_loadfail += 1
         if args.print_every and (n + 1) % args.print_every == 0:
             print("    " + str(n + 1) + "/" + str(len(common)) +
                   ", " + str(len(rows)) + " landfalls", flush=True)
 
+    print("")
+    print(str(n_land) + " cases had a truth landfall; " +
+          str(n_short) + " had less than " + str(args.window) +
+          " h of forecast after it; " + str(n_loadfail) +
+          " failed to load; " + str(len(rows)) + " usable")
     if not rows:
         raise SystemExit(
-            "no case had a truth landfall with " + str(args.window) +
-            " h of forecast after it. Lower --window, raise --max-lead, or "
-            "loosen --land-threshold.")
+            "nothing usable. If the landfall count above is non-zero the "
+            "failure is in loading, not in finding them - check that "
+            "output_sfc_<lead>h.npy exists at the landfall lead plus "
+            "--window.")
 
     cols = (["ERA5"] if want_e else []) + \
            (["best track"] if want_b and any("best track" in r for r in rows) else []) + \
@@ -270,14 +287,14 @@ if __name__ == "__main__":
     p.add_argument("--track-csv", default=None,
                    help="directory of {TC_ID}.csv, for the best-track column")
     p.add_argument("--truth", default="era5", choices=("era5", "best", "both"))
-    p.add_argument("--window", type=float, default=24,
+    p.add_argument("--window", type=int, default=24,
                    help="hours after landfall over which to measure the change")
     p.add_argument("--core-deg", type=float, default=1.0,
                    help="radius searched for land; a circulation feels a coast "
                         "before its centre crosses one")
     p.add_argument("--land-threshold", type=float, default=0.5)
     p.add_argument("--search-deg", type=float, default=5.0)
-    p.add_argument("--max-lead", type=float, default=192)
+    p.add_argument("--max-lead", type=int, default=192)
     p.add_argument("--version", default=None)
     p.add_argument("--mode", default="one-way",
                    choices=("one-way", "two-way", "standalone"))
