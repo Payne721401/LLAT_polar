@@ -161,6 +161,8 @@ def main(args):
                 print("{:<10}{:<14}".format(var, label) + "".join(cells))
             print()
 
+    draw(acc, order, runs, leads, args)
+
     if args.csv:
         out = os.path.expanduser(args.csv)
         os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
@@ -176,6 +178,108 @@ def main(args):
                             label, var, h, (s[0] / s[2]) ** 0.5,
                             s[1] / s[2], s[2]))
         print("wrote " + out)
+
+
+UNITS = {"msl": "Pa", "u10": "m/s", "v10": "m/s", "t2m": "K",
+         "tcwv": "kg/m2", "tp": "m", "sp": "Pa", "d2m": "K"}
+
+
+def unit_of(var):
+    if var in UNITS:
+        return UNITS[var]
+    return {"z": "m2/s2", "t": "K", "u": "m/s", "v": "m/s",
+            "q": "kg/kg", "w": "Pa/s"}.get(var[0], "")
+
+
+def draw(acc, order, runs, leads, args):
+    """A grid of RMSE curves, plus one bar panel of the skill difference.
+
+    Two things are wanted from this figure and they need different shapes. The
+    per-variable curves answer "how big is the error"; the bars answer "which
+    model is better and by how much", which a reader cannot get from eleven
+    pairs of overlapping lines. The bars are a percentage, because the variables
+    span Pa and kg/kg and an absolute difference is not comparable across them.
+    """
+    if not order:
+        return
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    def series(label, var, kind):
+        out = []
+        for h in leads:
+            s = acc[label].get(var, {}).get(h)
+            if not s or s[2] == 0:
+                out.append(np.nan)
+            elif kind == "rmse":
+                out.append((s[0] / s[2]) ** 0.5)
+            else:
+                out.append(s[1] / s[2])
+        return np.array(out, dtype=float)
+
+    n = len(order)
+    ncol = min(4, n)
+    nrow = (n + ncol - 1) // ncol + 1
+    fig, ax = plt.subplots(nrow, ncol, figsize=(4.2 * ncol, 3.3 * nrow),
+                           squeeze=False)
+    colours = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+
+    for i, var in enumerate(order):
+        a = ax[i // ncol][i % ncol]
+        for (label, _), c in zip(runs, colours):
+            a.plot(leads, series(label, var, "rmse"), "-o", ms=3, color=c,
+                   label=label)
+            if args.show_bias:
+                a.plot(leads, np.abs(series(label, var, "bias")), "--",
+                       lw=1.0, color=c)
+        a.set_title(var + "  [" + unit_of(var) + "]", fontsize=10)
+        a.set_xlabel("forecast hour")
+        a.set_ylabel("RMSE")
+        a.grid(alpha=0.3)
+        if i == 0:
+            a.legend(fontsize=8)
+
+    for j in range(n, nrow * ncol):
+        r, c = j // ncol, j % ncol
+        if r < nrow:
+            ax[r][c].axis("off")
+
+    # Bottom row, spanning: the comparison itself. Percentages, because Pa and
+    # kg/kg cannot share an axis and the question is relative skill anyway.
+    if len(runs) >= 2:
+        for c in range(ncol):
+            ax[nrow - 1][c].remove()
+        bar = fig.add_subplot(nrow, 1, nrow)
+        base = runs[0][0]
+        width = 0.8 / max(1, len(leads))
+        x = np.arange(len(order))
+        for k, h in enumerate(leads):
+            if h == 0:
+                continue
+            vals = []
+            for var in order:
+                b = series(base, var, "rmse")[k]
+                o = series(runs[1][0], var, "rmse")[k]
+                vals.append(100.0 * (o - b) / b if b and np.isfinite(b) else np.nan)
+            bar.bar(x + (k - len(leads) / 2) * width, vals, width,
+                    label="+" + str(h) + " h")
+        bar.axhline(0, color="0.3", lw=1)
+        bar.set_xticks(x)
+        bar.set_xticklabels(order, rotation=30, ha="right")
+        bar.set_ylabel("RMSE difference [%]")
+        bar.set_title(runs[1][0] + " against " + base +
+                      " — above zero is worse")
+        bar.grid(alpha=0.3, axis="y")
+        bar.legend(fontsize=8, ncol=len(leads))
+
+    out = os.path.expanduser(args.out or os.path.join(
+        "analysis", "figures", "season",
+        "rmse_" + "_".join(l.replace("/", "-") for l, _ in runs) + ".png"))
+    os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out, dpi=140)
+    print("\nwrote " + out)
 
 
 if __name__ == "__main__":
@@ -196,5 +300,10 @@ if __name__ == "__main__":
     p.add_argument("--limit", type=int, default=None,
                    help="stop after this many cases, for a quick look first")
     p.add_argument("--print-every", type=int, default=25)
+    p.add_argument("--show-bias", action="store_true",
+                   help="overlay |bias| as a dashed line on each panel")
+    p.add_argument("--out", default=None,
+                   help="figure path; defaults to analysis/figures/season/"
+                        "rmse_<labels>.png")
     p.add_argument("--csv", default=None)
     main(p.parse_args())
