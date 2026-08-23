@@ -74,6 +74,17 @@ def render(args, leads, frame_dir):
             cmd += ['--panels'] + [str(x) for x in args.panels]
         print(f"  [{i + 1}/{len(leads)}] +{h:03d} h", flush=True)
         p = subprocess.run(cmd, capture_output=True, text=True)
+        if p.returncode != 0 and args.era5 and 'No such file or directory' in (
+                p.stdout + p.stderr) and '_combined.nc' in (p.stdout + p.stderr):
+            # The truth record is shorter than the forecast: ERA5 stops when the
+            # storm does, and 202416W has no combined.nc past +144 h. Losing the
+            # truth column for the late frames is the right outcome; losing the
+            # animation is not.
+            print(f"       ERA5 has no truth at +{h} h, drawing without it",
+                  flush=True)
+            p = subprocess.run([c for c in cmd
+                                if c not in ('--era5', args.era5)],
+                               capture_output=True, text=True)
         if p.returncode != 0 or not os.path.exists(png):
             # Print the child's own message: a missing lead in one run, or a
             # variable the ERA5 file does not carry, is far more useful than
