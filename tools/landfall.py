@@ -267,6 +267,22 @@ def main(args):
           "simply have\nput the storm somewhere that never had a coast under "
           "it.")
 
+    # Name the cases that deepen most after the coast. A season number says
+    # the model does not feel the land; these are the storms where it is
+    # visible, and the ones worth putting through plot_forecast.
+    for label, _ in runs:
+        have = [r for r in rows if label in r and np.isfinite(r[label])]
+        if not have:
+            continue
+        have.sort(key=lambda r: r[label])
+        print("\n  " + label + " - most deepening after landfall")
+        print("  {:<10}{:<12}{:>10}{:>10}{:>10}".format(
+            "storm", "init", "landfall", "forecast", base))
+        for r in have[:args.worst]:
+            print("  {:<10}{:<12}{:>9.0f}h{:>+10.1f}{:>+10.1f}".format(
+                r["tc"], r["init"], r["landfall_h"], r[label],
+                r.get(base, float("nan"))))
+
     draw(rows, cols, runs, args)
 
     if args.csv:
@@ -304,7 +320,13 @@ def draw(rows, cols, runs, args):
 
     fig, ax = plt.subplots(1, 3, figsize=(16, 4.6))
 
-    bp = ax[0].boxplot(data, labels=labels, showmeans=True, widths=0.6)
+    # matplotlib 3.9 renamed labels to tick_labels and deprecated the old
+    # spelling; 3.8 and earlier only know the old one. Try the new name and
+    # fall back, rather than pinning a version for one keyword.
+    try:
+        ax[0].boxplot(data, tick_labels=labels, showmeans=True, widths=0.6)
+    except TypeError:
+        ax[0].boxplot(data, labels=labels, showmeans=True, widths=0.6)
     ax[0].axhline(0, color="0.4", lw=1, ls="--")
     ax[0].set_ylabel("MSLP change over " + str(args.window) + " h [hPa]")
     ax[0].set_title("after the truth's landfall, " + str(len(rows)) +
@@ -373,6 +395,8 @@ if __name__ == "__main__":
                    choices=("one-way", "two-way", "standalone"))
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--print-every", type=int, default=25)
+    p.add_argument("--worst", type=int, default=8,
+                   help="how many of the most-deepening cases to name")
     p.add_argument("--out", default=None,
                    help="figure path; defaults to analysis/figures/season/"
                         "landfall_<labels>_<window>h.png")
