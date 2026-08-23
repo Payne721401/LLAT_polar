@@ -9,7 +9,51 @@ Read the "Invariants" section before changing anything under `DLAMPty_inference.
 
 ---
 
-## Current status - 2026-08-17
+## Current status - 2026-08-23
+
+Full detail in `analysis/2026-08-23_status_and_roadmap.md`.
+
+**Best model `r80_420k`**: R=80, Theta=360, patch (2,4,6), 420,000 steps, val 0.20042,
+train/val gap 33.3 %. Verified on all 337 paired 2024 cases at 192 h, one-way.
+
+| | cartesian | r80_420k |
+|---|---|---|
+| track, 24 h | 78 km | 83 km |
+| track, 120 h | 431 km | 467 km |
+| MSLP bias, 120 h | -2.7 hPa | **-13.9 hPa** |
+| msl RMSE, 120 h | 499 Pa | 642 Pa |
+
+**Polar is 6-8 % behind on track**, down from 80 % behind at the baseline, and it is
+**systematically too deep** - a bias that survives restricting to forecasts inside 200 km.
+
+**An earlier "polar has caught up" reading was wrong**: it came from an 80-case
+`--max-starts 3` subset, which is each storm's first three initial times and therefore the
+early, easier life cycle. Never compare on a `--max-starts` subset.
+
+**The paper (p27) reports the opposite sign**: strong TCs (best-track MSLP < 950 hPa) are
+**+40 hPa too weak**, attributed to ERA5 not resolving the eyewall. P1 and r80 halved the
+radial patch from 1.00 to 0.50 deg against an RMW of 0.3-0.5 - the diagnosed cause - and
+the sign flipped. Those two numbers are **not yet comparable**: the paper's is stratified by
+storm strength and ours is not. Stratify before claiming it.
+
+**The paper uses weighted MSE; this implementation uses L1**, with no comment anywhere
+explaining the change. L1 is forgiving of a uniform offset, which is what -229 Pa of msl
+bias across the whole field looks like. That is the most specific open hypothesis and the
+next experiment.
+
+**Also open**: the forecast is nearly axisymmetric by +96 h - azimuthal std of msl at
+r = 8 deg is 0.71 hPa against ERA5's 3.95 - and asymmetry is what drives beta drift.
+The outer-disc patch texture, by contrast, is largely **fixed**: 1.23 % of azimuthal
+variance at the patch harmonic in P1, 0.08 % in r80_420k.
+
+**No hardware lever remains**: dataloader, workers, batch size, sixteen GPUs (1.04x) and
+torch.compile (2.3 %, inside the noise) were all measured and all dead. 41 % utilisation is
+what this model does. Returns on steps are nearly exhausted too - 362k to 420k bought
+0.09 %.
+
+---
+
+## Previous status - 2026-08-17
 
 Keep this block short and current. It is the first thing an agent reads. Detail belongs in
 dated notes under `analysis/` - which is **gitignored**, so those exist only on the machine

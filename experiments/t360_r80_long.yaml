@@ -1,0 +1,69 @@
+# Experiment E - the best geometry so far, on the longer schedule.
+#
+#   sbatch --export=ALL,SAVE_TOP_K=10,FRESH=1,RUNDIR=runs/t360_r80_long,OVERLAY=experiments/t360_r80_long.yaml \
+#          job_scripts/train_h200.sh
+#
+# t360_r80.yaml's grid with t360_long.yaml's 210,000 steps. Both halves are
+# measured rather than assumed:
+#
+#     run          steps     val        gap     hours   season 24 h
+#     t360          105k   0.24172    12.5 %     6.7      129 km
+#     pr2           105k   0.23354    10.6 %     6.8        -
+#     r80           105k   0.22766    11.9 %     7.5        -
+#     t360_long     210k   0.22587    22.5 %    13.4       75 km
+#
+# ── Why the doubled schedule, despite the gap ───────────────────────────
+# t360_long's train/val gap went from 12.5 % to 22.5 %, which normally says the
+# extra fit is not transferring. Here it did transfer: the 2024 season is
+# entirely out of sample and its median 24 h position error fell from 129 km to
+# 75, a 42 % improvement, matching the Cartesian model's 77 km at that lead.
+#
+# So the gap widening was not a warning in this case, and the reason to stop at
+# 105,000 steps is gone. It is worth stating plainly because the opposite
+# conclusion was drawn from the same number a week ago, before the season had
+# been run: a gap is evidence about generalisation only until out-of-sample
+# skill is available, and then the skill answers directly.
+#
+# ── What this run is comparable to, and what it is not ──────────────────
+# Against runs/t360_long: same 210,000 steps, same schedule, same learning rate,
+# so the difference is the radial grid alone - R = 80 with dr = 0.125 deg and a
+# 0.50 deg radial patch, against R = 40 at 0.25 and 1.00.
+#
+# Against runs/t360_r80: same grid, twice the schedule.
+#
+# It is not comparable to the Cartesian model, which had 1,600,000 steps at
+# lr 4e-4. That remains the largest unbalanced variable in every comparison made
+# so far, and 210,000 is still under a seventh of it.
+#
+# ── Cost ────────────────────────────────────────────────────────────────
+# r80 took 7 h 30 m for 105,000 steps on 8 H200s, so expect about 15 h. CHECK
+# THE QUEUE WALLTIME FIRST. max_steps defines the cosine annealing curve, so a
+# job killed at the limit leaves a learning rate that never finished annealing
+# and a model that compares to nothing - worse than not having run it.
+#
+# SAVE_TOP_K=10 in the sbatch line above rather than the default 30: thirty
+# checkpoints at 305 MB is 9.2 GB, and a full quota truncates one mid-write,
+# which is how job 257976 died after forty-seven minutes of healthy training.
+#
+# ── The open question this does not answer ──────────────────────────────
+# Whether the outer-disc patch texture is undertraining or structural.
+# tools/polar_seam.py measured 1.23 % of the azimuthal variance at the patch
+# harmonic outside 8 degrees in standalone mode against 0.07 % inside. Rerun it
+# on this checkpoint. The prediction recorded in t360_long.yaml - that longer
+# training would not remove it, because nothing in an unweighted L1 over 98
+# channels penalises a percent-level ripple - is still untested, and this run is
+# the second chance to test it.
+
+trainer:
+  max_steps: 210000
+
+data:
+  data_spatial_shape: [13, 80, 360]
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  optimizer_args:
+    lr: 0.00005
