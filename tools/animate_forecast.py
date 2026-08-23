@@ -163,7 +163,18 @@ def main(args):
         "analysis", "figures", "forecasts", args.tc_id, args.init,
         "fields.mp4" if args.mp4 else "fields.gif"))
     os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
-    frame_dir = args.frames or os.path.join(os.path.dirname(out), "frames")
+    # Frames are keyed on WHAT is in them, not just the lead. A shared
+    # frames/ directory meant a second call with different --run arguments or
+    # different --panels reused the first call's PNGs - so a two-model
+    # animation silently came back with a third model in it. The tag is short
+    # and stable, so a rerun of the same comparison still resumes.
+    import hashlib
+    tag = hashlib.md5(("|".join(sorted(args.run))
+                       + "|" + str(args.panels)
+                       + "|" + str(args.mask_radius)
+                       + "|" + str(args.dpi)).encode()).hexdigest()[:8]
+    frame_dir = args.frames or os.path.join(os.path.dirname(out),
+                                            "frames_" + tag)
 
     print(f"{len(leads)} frames, +{leads[0]} to +{leads[-1]} h, "
           f"every {args.every * (leads[1] - leads[0]) // args.every if len(leads) > 1 else 0} h")
