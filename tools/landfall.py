@@ -267,6 +267,8 @@ def main(args):
           "simply have\nput the storm somewhere that never had a coast under "
           "it.")
 
+    draw(rows, cols, runs, args)
+
     if args.csv:
         out = os.path.expanduser(args.csv)
         os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
@@ -276,6 +278,77 @@ def main(args):
             for r in rows:
                 w.writerow(r)
         print("wrote " + out)
+
+
+def draw(rows, cols, runs, args):
+    """Three views, because the mean alone hid the result the first time.
+
+    A box plot for the distribution: the polar model's MEDIAN change is
+    negative while its mean is positive, which means most cases keep deepening
+    and a few that fill hard drag the average up. A mean would have reported
+    "fills a little" and been wrong about the typical storm.
+
+    A scatter against truth for the per-case relationship, with the one-to-one
+    line: points below it are storms the model failed to fill.
+
+    A histogram of model-minus-truth for how one-sided that failure is.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    base = cols[0]
+    labels = [c for c in cols]
+    data = [np.array([r[c] for r in rows if c in r and np.isfinite(r[c])])
+            for c in labels]
+
+    fig, ax = plt.subplots(1, 3, figsize=(16, 4.6))
+
+    bp = ax[0].boxplot(data, labels=labels, showmeans=True, widths=0.6)
+    ax[0].axhline(0, color="0.4", lw=1, ls="--")
+    ax[0].set_ylabel("MSLP change over " + str(args.window) + " h [hPa]")
+    ax[0].set_title("after the truth's landfall, " + str(len(rows)) +
+                    " cases\n"
+                    "positive is filling; the dashed line is no change")
+    ax[0].grid(alpha=0.3, axis="y")
+    for t in ax[0].get_xticklabels():
+        t.set_rotation(20)
+
+    bv = np.array([r[base] for r in rows if base in r])
+    colours = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    for (label, _), c in zip(runs, colours):
+        v = np.array([r[label] for r in rows if label in r and base in r])
+        if v.size != bv.size:
+            continue
+        ax[1].scatter(bv, v, s=12, alpha=0.5, color=c, label=label)
+        ax[2].hist(v - bv, bins=30, histtype="step", lw=1.6, color=c,
+                   label=label)
+    lim = [min(bv.min(), -20), max(bv.max(), 40)]
+    ax[1].plot(lim, lim, "k-", lw=1)
+    ax[1].axhline(0, color="0.6", lw=0.8)
+    ax[1].axvline(0, color="0.6", lw=0.8)
+    ax[1].set_xlabel(base + " change [hPa]")
+    ax[1].set_ylabel("forecast change [hPa]")
+    ax[1].set_title("per case, against truth\n"
+                    "below the line is failing to fill")
+    ax[1].grid(alpha=0.3)
+    ax[1].legend(fontsize=8)
+
+    ax[2].axvline(0, color="0.4", lw=1, ls="--")
+    ax[2].set_xlabel("forecast minus " + base + " [hPa]")
+    ax[2].set_ylabel("cases")
+    ax[2].set_title("how one-sided the failure is")
+    ax[2].grid(alpha=0.3)
+    ax[2].legend(fontsize=8)
+
+    out = os.path.expanduser(args.out or os.path.join(
+        "analysis", "figures", "season",
+        "landfall_" + "_".join(l.replace("/", "-") for l, _ in runs) +
+        "_" + str(args.window) + "h.png"))
+    os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out, dpi=140)
+    print("wrote " + out)
 
 
 if __name__ == "__main__":
@@ -300,5 +373,8 @@ if __name__ == "__main__":
                    choices=("one-way", "two-way", "standalone"))
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--print-every", type=int, default=25)
+    p.add_argument("--out", default=None,
+                   help="figure path; defaults to analysis/figures/season/"
+                        "landfall_<labels>_<window>h.png")
     p.add_argument("--csv", default=None)
     main(p.parse_args())
