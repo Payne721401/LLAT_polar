@@ -274,14 +274,21 @@ def main(args):
         have = [r for r in rows if label in r and np.isfinite(r[label])]
         if not have:
             continue
-        have.sort(key=lambda r: r[label])
+        # Rank by model MINUS truth, not by the model alone. Sorting on the
+        # model picked cases where ERA5 itself deepened - 202410W, truth -9.9
+        # against forecast -10.8 - which is a storm brushing an island, not a
+        # landfall the model failed to feel. The failure is the GAP.
+        have = [r for r in have if base in r and np.isfinite(r[base])]
+        if args.min_truth_fill is not None:
+            have = [r for r in have if r[base] >= args.min_truth_fill]
+        have.sort(key=lambda r: r[label] - r[base])
         print("\n  " + label + " - most deepening after landfall")
         print("  {:<10}{:<12}{:>10}{:>10}{:>10}".format(
-            "storm", "init", "landfall", "forecast", base))
+            "storm", "init", "landfall", "forecast", base) + "{:>10}".format("gap"))
         for r in have[:args.worst]:
             print("  {:<10}{:<12}{:>9.0f}h{:>+10.1f}{:>+10.1f}".format(
                 r["tc"], r["init"], r["landfall_h"], r[label],
-                r.get(base, float("nan"))))
+                r[base]) + "{:>+10.1f}".format(r[label] - r[base]))
 
     draw(rows, cols, runs, args)
 
@@ -395,6 +402,12 @@ if __name__ == "__main__":
                    choices=("one-way", "two-way", "standalone"))
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--print-every", type=int, default=25)
+    p.add_argument("--min-truth-fill", type=float, default=3.0,
+                   help="only rank cases where the TRUTH filled at least this "
+                        "much. A storm brushing an island can have the truth "
+                        "deepening too, and a model that deepens with it has "
+                        "not failed. Set to a large negative number to rank "
+                        "everything")
     p.add_argument("--worst", type=int, default=8,
                    help="how many of the most-deepening cases to name")
     p.add_argument("--out", default=None,
