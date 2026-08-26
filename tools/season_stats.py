@@ -154,6 +154,60 @@ def collect(root, era5_root, version, mode, limit=0, keep=None):
     return by_lead, cases, skipped, per_case
 
 
+def head_to_head(all_cases, runs, args):
+    """Which cases the second run wins and loses, against the first.
+
+    A median says the polar model is 8 % behind; it cannot say whether that is
+    every case slightly behind or a handful catastrophically so, and those call
+    for different work. Ranking each case by the DIFFERENCE separates them, and
+    the two tails are the cases worth plotting: one shows what the geometry
+    buys, the other what it costs.
+
+    Ranked at a single lead, because a case can win at 24 h and lose at 120 and
+    a rank over all leads at once would average that away.
+    """
+    if len(runs) < 2:
+        return
+    base, other = runs[0][0], runs[1][0]
+    h = args.worst_at
+    rows = []
+    for key in set(all_cases[base]) & set(all_cases[other]):
+        a = all_cases[base][key].get(h)
+        b = all_cases[other][key].get(h)
+        if a is None or b is None:
+            continue
+        rows.append((b - a, a, b, key))
+    if not rows:
+        print("\nno case has both runs at +" + str(h) + " h")
+        return
+    rows.sort()
+    n = max(1, min(args.worst or 10, len(rows) // 2))
+    wins = sum(1 for r in rows if r[0] < 0)
+    print("\n===== " + other + " against " + base + " at +" + str(h) +
+          " h, " + str(len(rows)) + " cases =====")
+    print("  " + other + " is closer in " + str(wins) + " of " + str(len(rows)) +
+          " (" + format(100.0 * wins / len(rows), ".0f") + " %)")
+    for title, sel in (("BEST for " + other, rows[:n]),
+                       ("WORST for " + other, rows[-n:][::-1])):
+        print("\n  " + title)
+        print("  {:<10}{:<12}{:>12}{:>12}{:>10}".format(
+            "storm", "init", base[:11], other[:11], "diff"))
+        for d, a, b, (tc, init) in sel:
+            print("  {:<10}{:<12}{:>11.0f}k{:>11.0f}k{:>+9.0f}k".format(
+                tc, init, a, b, d))
+    if args.csv:
+        out = os.path.expanduser(args.csv)
+        os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write("run,tc,init,lead_h,error_km\n")
+            for name in all_cases:
+                for (tc, init), e in sorted(all_cases[name].items()):
+                    for lead in sorted(e):
+                        fh.write("{},{},{},{},{:.2f}\n".format(
+                            name, tc, init, lead, e[lead]))
+        print("\nwrote " + out)
+
+
 def report_worst(per_case, era5_root, n_worst, at_lead=None):
     """Name the worst cases, with a command that plots each one.
 
@@ -200,6 +254,7 @@ def main(args):
         print(f"comparing on the {len(keep)} initial times every run has; "
               f"pass --unpaired to use each run's full set", flush=True)
 
+    all_cases = {}
     for name, root in runs:
         by_lead, n_cases, skipped, per_case = collect(
             root, args.era5_root, args.version, args.mode, args.limit, keep)
@@ -236,9 +291,13 @@ def main(args):
             print(f"{h:>4}h {n[i]:>4} {med[i]:>8.0f}k {mean[i]:>8.0f}k "
                   f"{q1[i]:>7.0f}k {q3[i]:>7.0f}k {max(by_lead[h]):>8.0f}k")
 
+        all_cases[name] = {(tc, init): e for tc, init, _p, e in per_case}
+
         if args.worst:
             report_worst(per_case, os.path.expanduser(args.era5_root),
                          args.worst, args.worst_at)
+
+    head_to_head(all_cases, runs, args)
 
     axes[0].set_ylabel("position error [km]")
     axes[0].set_title("season median, shaded interquartile range\n"
@@ -278,6 +337,9 @@ if __name__ == "__main__":
     p.add_argument("--worst", type=int, default=0,
                    help="also name the N worst cases, each with the command "
                         "that plots it")
+    p.add_argument("--csv", default=None,
+                   help="write every case at every lead, so the ranking can be "
+                        "redone at another lead without recomputing the season")
     p.add_argument("--worst-at", type=int, default=120,
                    help="the lead to rank them at")
     p.add_argument("--print-every", type=int, default=24)
