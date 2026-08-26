@@ -89,13 +89,36 @@ def read_best_track(csv_dir, tc_id):
     if not rows:
         return {}
     keys = {k.lower().strip(): k for k in rows[0]}
-    tkey = next((keys[k] for k in ("time", "date", "datetime", "yyyymmddhh")
-                 if k in keys), None)
-    pkey = next((keys[k] for k in ("mslp", "pres", "pressure", "min_pres",
-                                   "cp", "slp") if k in keys), None)
-    if not tkey or not pkey:
+
+    def find(exact, substrings):
+        """Exact column name first, then a substring pass."""
+        for k in exact:
+            if k in keys:
+                return keys[k]
+        for k in keys:
+            if any(t in k for t in substrings):
+                return keys[k]
+        return None
+
+    # The JMA lists this project uses head the column "Pressure (hPa)" and split
+    # the time across Year, Month, Day and Hour. Neither matched the exact names,
+    # so this returned {} - which the caller reads as "this file has no
+    # pressure". --truth best was therefore silently absent from every landfall
+    # table rather than failing. The data was there the whole time.
+    pkey = find(("mslp", "pres", "pressure", "min_pres", "cp", "slp"),
+                ("mslp", "pressure", "pres", "slp"))
+    tkey = find(("time", "date", "datetime", "yyyymmddhh"), ())
+    ymdh = [keys.get(k) for k in ("year", "month", "day", "hour")]
+    if not pkey or not (tkey or all(ymdh)):
         return {}
     for r in rows:
+        if not tkey:
+            try:
+                t = datetime.datetime(*(int(float(r[c])) for c in ymdh))
+                out[t] = float(r[pkey])
+            except (TypeError, ValueError):
+                pass
+            continue
         raw = str(r[tkey]).strip().replace("-", "").replace(":", "") \
             .replace(" ", "").replace("/", "")
         # Match the format to the string's LENGTH. Trying the longest first

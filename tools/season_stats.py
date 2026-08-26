@@ -111,15 +111,40 @@ EXCLUDE = ('_scale',)
 
 
 def find_starts(root, version, mode):
-    """Every (tc_id, init) a sweep produced, from the directory layout alone."""
-    sub = MODE_DIR[mode] if not version else MODE_DIR[mode].replace('*', version)
+    """Every (tc_id, init) a sweep produced, from the directory layout alone.
+
+    Refuses a root where the prefix glob matches more than one model directory.
+    /wk2/yungyun/FCNV2_TC holds both 2_way_circle_couple_model and
+    2_way_circle_couple_model_v60_e3268 - different models over the same initial
+    times - and every caller keys on (tc, init): the dict at the pairing step
+    kept whichever sorted last while collect() counted both, so the printed case
+    count and the statistics described different sets, and neither said so. A
+    wrong model is worse than no answer, so name what is there and let --version
+    choose.
+
+    The test is `version is None`, not `not version`, so --version "" selects
+    the unsuffixed directory. There was no way to ask for it before.
+    """
+    sub = MODE_DIR[mode] if version is None else MODE_DIR[mode].replace('*', version)
     pattern = os.path.join(os.path.expanduser(root), '*', sub, 'start_from_*')
-    out = []
+    out, models = [], {}
     for p in sorted(glob.glob(pattern)):
         m = re.search(r'start_from_(\d{10})$', p)
-        if not m or any(x in p.split(os.sep)[-2] for x in EXCLUDE):
+        parts = p.split(os.sep)
+        if not m or any(x in parts[-2] for x in EXCLUDE):
             continue
-        out.append((p.split(os.sep)[-3], m.group(1), p))
+        models[parts[-2]] = models.get(parts[-2], 0) + 1
+        out.append((parts[-3], m.group(1), p))
+    if len(models) > 1:
+        prefix = MODE_DIR[mode].rstrip('*')
+        lines = [f'    --version "{k[len(prefix):]}"'.ljust(34)
+                 + f"{v} cases   ({k})" for k, v in sorted(models.items())]
+        raise SystemExit("\n".join(
+            [f"{root}",
+             f"  matches {len(models)} model directories under --mode {mode}. "
+             f"They are different models",
+             f"  over the same initial times, so mixing them is not a "
+             f"comparison. Pick one:", ""] + lines))
     return out
 
 
