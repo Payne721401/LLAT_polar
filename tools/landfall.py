@@ -49,6 +49,9 @@ def _load(name):
 
 ss = _load("season_stats")
 pf = ss.pf
+# Lives in track_error: season_stats needs it too, and it imports track_error
+# already, so putting it there is the placement with no import cycle.
+read_best_track = ss.te.read_best_track
 
 
 def centre_mslp(field, search_deg=5.0):
@@ -76,68 +79,6 @@ def over_land(field, core_deg):
     res = abs(float(field.lon[0, 1] - field.lon[0, 0]))
     m = (np.hypot(xx, yy) * res <= core_deg) & np.isfinite(lm)
     return float(np.nanmax(lm[m])) if m.any() else 0.0
-
-
-def read_best_track(csv_dir, tc_id):
-    """{datetime: mslp_hPa} from the best-track CSV, if it has a pressure column."""
-    p = os.path.join(os.path.expanduser(csv_dir), tc_id + ".csv")
-    if not os.path.exists(p):
-        return {}
-    out = {}
-    with open(p, newline="", encoding="utf-8", errors="replace") as fh:
-        rows = list(csv.DictReader(fh))
-    if not rows:
-        return {}
-    keys = {k.lower().strip(): k for k in rows[0]}
-
-    def find(exact, substrings):
-        """Exact column name first, then a substring pass."""
-        for k in exact:
-            if k in keys:
-                return keys[k]
-        for k in keys:
-            if any(t in k for t in substrings):
-                return keys[k]
-        return None
-
-    # The JMA lists this project uses head the column "Pressure (hPa)" and split
-    # the time across Year, Month, Day and Hour. Neither matched the exact names,
-    # so this returned {} - which the caller reads as "this file has no
-    # pressure". --truth best was therefore silently absent from every landfall
-    # table rather than failing. The data was there the whole time.
-    pkey = find(("mslp", "pres", "pressure", "min_pres", "cp", "slp"),
-                ("mslp", "pressure", "pres", "slp"))
-    tkey = find(("time", "date", "datetime", "yyyymmddhh"), ())
-    ymdh = [keys.get(k) for k in ("year", "month", "day", "hour")]
-    if not pkey or not (tkey or all(ymdh)):
-        return {}
-    for r in rows:
-        if not tkey:
-            try:
-                t = datetime.datetime(*(int(float(r[c])) for c in ymdh))
-                out[t] = float(r[pkey])
-            except (TypeError, ValueError):
-                pass
-            continue
-        raw = str(r[tkey]).strip().replace("-", "").replace(":", "") \
-            .replace(" ", "").replace("/", "")
-        # Match the format to the string's LENGTH. Trying the longest first
-        # and catching ValueError is not enough: strptime accepts a short
-        # string against a long format in some builds and returns a silently
-        # wrong date - 2024102700 came back as 2024-10-02 07:00.
-        fmt = {14: "%Y%m%d%H%M%S", 12: "%Y%m%d%H%M", 10: "%Y%m%d%H",
-               8: "%Y%m%d"}.get(len(raw))
-        if fmt is None:
-            continue
-        try:
-            t = datetime.datetime.strptime(raw, fmt)
-        except ValueError:
-            continue
-        try:
-            out[t] = float(r[pkey])
-        except (TypeError, ValueError):
-            pass
-    return out
 
 
 def main(args):

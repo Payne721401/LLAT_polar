@@ -21,6 +21,7 @@ Usage
         --tc-id 202421W --init 2024102500 --out track.png
 """
 import argparse
+import csv
 import datetime
 import importlib.util
 import os
@@ -34,6 +35,87 @@ pf = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pf)
 
 DEG_KM = 111.32
+
+
+def read_best_track(csv_dir, tc_id, want="pressure"):
+    """{datetime: value} from the best-track CSV, if it carries the column.
+
+    want="pressure" gives central pressure in hPa, want="position" gives
+    (lon, lat) in degrees. One function because the hard parts - finding the
+    columns and rebuilding the timestamp - are the same either way, and two
+    copies of them would drift.
+
+    Returns {} when the file has no such column, which every caller reads as
+    "this file cannot answer that".
+    """
+    p = os.path.join(os.path.expanduser(csv_dir), tc_id + ".csv")
+    if not os.path.exists(p):
+        return {}
+    out = {}
+    with open(p, newline="", encoding="utf-8", errors="replace") as fh:
+        rows = list(csv.DictReader(fh))
+    if not rows:
+        return {}
+    keys = {k.lower().strip(): k for k in rows[0]}
+
+    def find(exact, substrings):
+        """Exact column name first, then a substring pass."""
+        for k in exact:
+            if k in keys:
+                return keys[k]
+        for k in keys:
+            if any(t in k for t in substrings):
+                return keys[k]
+        return None
+
+    # The JMA lists this project uses head their columns "Pressure (hPa)",
+    # "Lat." and "Long.", and split the time across Year, Month, Day and Hour.
+    # None of that matched the exact names the first version looked for, so this
+    # returned {} - which callers read as "no pressure in this file". --truth
+    # best was therefore silently absent from every landfall table rather than
+    # failing. The data was there throughout.
+    if want == "position":
+        cols = [find(("lon", "longitude", "long"), ("lon",)),
+                find(("lat", "latitude"), ("lat",))]
+    else:
+        cols = [find(("mslp", "pres", "pressure", "min_pres", "cp", "slp"),
+                     ("mslp", "pressure", "pres", "slp"))]
+    tkey = find(("time", "date", "datetime", "yyyymmddhh"), ())
+    ymdh = [keys.get(k) for k in ("year", "month", "day", "hour")]
+    if not all(cols) or not (tkey or all(ymdh)):
+        return {}
+
+    def value(r):
+        v = tuple(float(r[c]) for c in cols)
+        return v if len(v) > 1 else v[0]
+
+    for r in rows:
+        if not tkey:
+            try:
+                t = datetime.datetime(*(int(float(r[c])) for c in ymdh))
+                out[t] = value(r)
+            except (TypeError, ValueError):
+                pass
+            continue
+        raw = str(r[tkey]).strip().replace("-", "").replace(":", "") \
+            .replace(" ", "").replace("/", "")
+        # Match the format to the string's LENGTH. Trying the longest first
+        # and catching ValueError is not enough: strptime accepts a short
+        # string against a long format in some builds and returns a silently
+        # wrong date - 2024102700 came back as 2024-10-02 07:00.
+        fmt = {14: "%Y%m%d%H%M%S", 12: "%Y%m%d%H%M", 10: "%Y%m%d%H",
+               8: "%Y%m%d"}.get(len(raw))
+        if fmt is None:
+            continue
+        try:
+            t = datetime.datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+        try:
+            out[t] = value(r)
+        except (TypeError, ValueError):
+            pass
+    return out
 
 
 def centre(field):

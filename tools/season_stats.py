@@ -47,6 +47,7 @@ pf = te.pf
 # +0 h truth of the next, and without this each file is opened a dozen times from
 # a network filesystem. That is what makes a season look like it has hung.
 _TRUTH = {}
+_BT = {}
 
 
 def truth_centre(era5_dir, tc_id, valid, n):
@@ -110,7 +111,7 @@ MODE_DIR = {'one-way': 'one_way_couple_model*',
 EXCLUDE = ('_scale',)
 
 
-def find_starts(root, version, mode):
+def find_starts(root, version, mode, subdir=None):
     """Every (tc_id, init) a sweep produced, from the directory layout alone.
 
     Refuses a root where the prefix glob matches more than one model directory.
@@ -119,13 +120,19 @@ def find_starts(root, version, mode):
     times - and every caller keys on (tc, init): the dict at the pairing step
     kept whichever sorted last while collect() counted both, so the printed case
     count and the statistics described different sets, and neither said so. A
-    wrong model is worse than no answer, so name what is there and let --version
-    choose.
+    wrong model is worse than no answer, so name what is there and let the
+    caller choose.
 
-    The test is `version is None`, not `not version`, so --version "" selects
-    the unsuffixed directory. There was no way to ask for it before.
+    `subdir` names one model directory outright and skips both the glob and the
+    check. `version is None`, not `not version`, so --version "" selects the
+    unsuffixed directory; there was no way to ask for it before.
     """
-    sub = MODE_DIR[mode] if version is None else MODE_DIR[mode].replace('*', version)
+    if subdir is not None:
+        sub = subdir
+    elif version is None:
+        sub = MODE_DIR[mode]
+    else:
+        sub = MODE_DIR[mode].replace('*', version)
     pattern = os.path.join(os.path.expanduser(root), '*', sub, 'start_from_*')
     out, models = [], {}
     for p in sorted(glob.glob(pattern)):
@@ -136,28 +143,39 @@ def find_starts(root, version, mode):
         models[parts[-2]] = models.get(parts[-2], 0) + 1
         out.append((parts[-3], m.group(1), p))
     if len(models) > 1:
-        prefix = MODE_DIR[mode].rstrip('*')
-        lines = [f'    --version "{k[len(prefix):]}"'.ljust(34)
-                 + f"{v} cases   ({k})" for k, v in sorted(models.items())]
+        lines = [f'    {v:>4} cases   --runs "NAME={root}@{k}"'
+                 for k, v in sorted(models.items())]
         raise SystemExit("\n".join(
             [f"{root}",
              f"  matches {len(models)} model directories under --mode {mode}. "
              f"They are different models",
              f"  over the same initial times, so mixing them is not a "
-             f"comparison. Pick one:", ""] + lines))
+             f"comparison. Name one:", ""] + lines))
     return out
 
 
-def errors_for(run_dir, era5_dir, tc_id, init_str):
-    """Position error at each lead, or an empty dict if truth is unavailable."""
+def errors_for(run_dir, era5_dir, tc_id, init_str, bt=None):
+    """Position error at each lead, or an empty dict if truth is unavailable.
+
+    `bt` is a best-track {datetime: (lon, lat)}; without it the truth is ERA5.
+    Which one matters less here than it does for intensity - ERA5's position
+    sits about 30 km from best track, already ruled out as a source of the
+    season's differences - but the paper verifies against IBTrACS, so a number
+    quoted beside the paper's should come from the same kind of truth.
+    """
     init = datetime.datetime.strptime(init_str, "%Y%m%d%H")
     meta = pf.read_meta(run_dir)
     out = {}
     for h in pf.available_leads(run_dir):
+        valid = init + datetime.timedelta(hours=h)
         try:
             flon, flat, n = forecast_centre(run_dir, h, meta)
-            tlon, tlat = truth_centre(era5_dir, tc_id,
-                                      init + datetime.timedelta(hours=h), n)
+            if bt is None:
+                tlon, tlat = truth_centre(era5_dir, tc_id, valid, n)
+            elif valid in bt:
+                tlon, tlat = bt[valid]
+            else:
+                continue          # best track is 6-hourly, the forecast is not
         except (FileNotFoundError, OSError):
             continue                      # ERA5 is 6-hourly; storms also end
         ex, ey = te.km(flon - tlon, flat - tlat, tlat)
@@ -165,10 +183,11 @@ def errors_for(run_dir, era5_dir, tc_id, init_str):
     return out
 
 
-def collect(root, era5_root, version, mode, limit=0, keep=None):
+def collect(root, era5_root, version, mode, limit=0, keep=None, subdir=None,
+            track_csv=None):
     """Every case's error curve, keyed by lead, plus the per-case curves."""
     by_lead, per_case, cases, skipped = {}, [], 0, []
-    starts = find_starts(root, version, mode)
+    starts = find_starts(root, version, mode, subdir)
     if keep is not None:
         starts = [s for s in starts if (s[0], s[1]) in keep]
     if limit:
@@ -176,10 +195,18 @@ def collect(root, era5_root, version, mode, limit=0, keep=None):
     for tc, init, path in starts:
         era5 = os.path.join(os.path.expanduser(era5_root), tc, 'ERA5',
                             'for_DLAMPty')
-        if not os.path.isdir(era5):
+        bt = None
+        if track_csv is not None:
+            if tc not in _BT:
+                _BT[tc] = te.read_best_track(track_csv, tc, "position")
+            bt = _BT[tc]
+            if not bt:
+                skipped.append(f"{tc} (no best-track position)")
+                continue
+        elif not os.path.isdir(era5):
             skipped.append(f"{tc} (no ERA5 directory)")
             continue
-        e = errors_for(path, era5, tc, init)
+        e = errors_for(path, era5, tc, init, bt)
         if not e:
             skipped.append(f"{tc}/{init} (no matching truth)")
             continue
@@ -270,12 +297,49 @@ def report_worst(per_case, era5_root, n_worst, at_lead=None):
               f"      --out analysis/figures/forecasts/{tc}/{init}/track.png")
 
 
+def parse_run(spec, default_mode):
+    """"label=root", optionally "label=root@selector" -> (label, root, mode, subdir).
+
+    The selector is either a mode name - one-way, two-way, standalone - or a
+    literal model-directory name. The literal form exists because --mode and
+    --version are single flags for every --runs, and the comparison this tool is
+    for needs neither to be: /wk2/yungyun/FCNV2_TC holds a one-way sweep and two
+    different two-way sweeps side by side, so asking for "the Cartesian one-way
+    against the Cartesian two-way against the polar one-way" could not be
+    written down at all. Naming the directory settles mode and version at once.
+
+        --runs "cart_1way=/wk2/yungyun/FCNV2_TC@one_way_couple_model"
+        --runs "cart_2way=/wk2/yungyun/FCNV2_TC@2_way_circle_couple_model"
+        --runs "polar_1way=/home/payne/LLAT_polar_runs_r80long_full@one-way"
+
+    The pairing that follows is unchanged, so mixed modes are still compared on
+    the initial times every run has.
+    """
+    label, _, rest = spec.partition('=')
+    root, sep, sel = rest.partition('@')
+    if not label or not root:
+        raise SystemExit(f'--runs {spec!r}: expected "label=path" or '
+                         f'"label=path@selector"')
+    if not sep:
+        return label, root, default_mode, None
+    if sel in MODE_DIR:
+        return label, root, sel, None
+    return label, root, None, sel
+
+
 def main(args):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
 
-    runs = [r.split('=', 1) if '=' in r else (args.mode, r) for r in args.runs]
+    runs = [parse_run(r, args.mode) for r in args.runs]
+    track_csv = None
+    if args.truth == "best":
+        if not args.track_csv:
+            raise SystemExit("--truth best needs --track-csv")
+        track_csv = os.path.expanduser(args.track_csv)
+    print("truth: " + ("best track, " + track_csv if track_csv
+                       else "ERA5 domain centre"), flush=True)
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
 
     # Restrict every run to the cases they all have. A median over 86 cases and a
@@ -283,17 +347,18 @@ def main(args):
     # being asked about is not separable from the other.
     keep = None
     if len(runs) > 1 and not args.unpaired:
-        for _, root in runs:
+        for _, root, mode, subdir in runs:
             ids = {(tc, init) for tc, init, _ in
-                   find_starts(root, args.version, args.mode)}
+                   find_starts(root, args.version, mode, subdir)}
             keep = ids if keep is None else (keep & ids)
         print(f"comparing on the {len(keep)} initial times every run has; "
               f"pass --unpaired to use each run's full set", flush=True)
 
     all_cases = {}
-    for name, root in runs:
+    for name, root, mode, subdir in runs:
         by_lead, n_cases, skipped, per_case = collect(
-            root, args.era5_root, args.version, args.mode, args.limit, keep)
+            root, args.era5_root, args.version, mode, args.limit, keep,
+            subdir, track_csv)
         seen = sorted({p.split(os.sep)[-2] for _, _, p, _ in per_case})
         print(f"  {name}: {n_cases} cases under {', '.join(seen) or '(none)'}",
               flush=True)
@@ -357,7 +422,21 @@ def main(args):
 if __name__ == "__main__":
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--runs", action="append", required=True, metavar="[NAME=]PATH")
+    p.add_argument("--runs", action="append", required=True,
+                   metavar="NAME=PATH[@SELECTOR]",
+                   help="repeatable. SELECTOR is a mode (one-way, two-way, "
+                        "standalone) or a model directory name, which pins "
+                        "mode and version together and lets one table mix "
+                        "modes; see parse_run")
+    p.add_argument("--truth", default="era5", choices=["era5", "best"],
+                   help="era5 takes the truth centre from the ERA5 domain's "
+                        "coordinates; best reads the best-track position, "
+                        "which is what the paper verifies against. The two "
+                        "differ by about 30 km, so this changes the numbers "
+                        "less than it changes what they can be quoted beside")
+    p.add_argument("--track-csv", default=None,
+                   help="directory of per-storm best-track CSVs, for "
+                        "--truth best")
     p.add_argument("--era5-root", required=True,
                    help="the directory holding {TC_ID}/ERA5/for_DLAMPty")
     p.add_argument("--version", default=None,
