@@ -481,7 +481,11 @@ class DLAMPty_model:
             model = ort.InferenceSession(self.onnx_path, sess_options=session_options, providers=ort_providers)
         else:
             model = ort.InferenceSession(self.onnx_path, providers=ort_providers)
-        print(f"inference with {ort_providers}")
+        # What the session GOT, not what it was asked for. ORT falls back to
+        # CPU silently when CUDA cannot initialise - a driver mismatch, a
+        # CPU-only onnxruntime wheel - and printing the requested list hides
+        # exactly the failure this line exists to reveal.
+        print(f"inference with {model.get_providers()}")
         return model
     
     def initialize(self):
