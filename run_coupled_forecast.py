@@ -559,11 +559,14 @@ if __name__ == "__main__":
                         "the forecast. 23.4%% is the floor, the corners outside "
                         "the polar disc, which have no model output at all")
     p.add_argument("--fcnv2-device", default="cuda")
-    # cuda now that the host driver is fixed. DLAMPty_inference still falls back
-    # when /proc/driver/nvidia/version is absent, and load_model reports
-    # get_providers() on the built session, so a fallback is visible rather than
-    # a silently eight-times-slower run.
-    p.add_argument("--llat-device", default="cuda")
+    # cpu, and not because CUDA is unavailable. FCNV2 and LLAT share one process
+    # and one card: on the lab host that card is a 10 GB RTX 3080 and FCNV2 alone
+    # peaks near 9.2 GB, so putting LLAT on it too fails at the first step with a
+    # BFC arena error over a 450 KB buffer - the card is simply full. Moving LLAT
+    # to the GPU buys little in any case: FCNV2 steps a global 0.25 degree field
+    # and LLAT steps 81x81, so FCNV2 is where the time goes and it is already
+    # there. Pass --llat-device cuda only on a card with room for both.
+    p.add_argument("--llat-device", default="cpu")
     p.add_argument("--start", default=None, metavar="YYYYMMDDHH",
                    help="one initial time by name, instead of counting rows with "
                         "--start-index. Which one matters: 202421W at "
