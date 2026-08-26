@@ -559,7 +559,11 @@ if __name__ == "__main__":
                         "the forecast. 23.4%% is the floor, the corners outside "
                         "the polar disc, which have no model output at all")
     p.add_argument("--fcnv2-device", default="cuda")
-    p.add_argument("--llat-device", default="cpu")
+    # cuda now that the host driver is fixed. DLAMPty_inference still falls back
+    # when /proc/driver/nvidia/version is absent, and load_model reports
+    # get_providers() on the built session, so a fallback is visible rather than
+    # a silently eight-times-slower run.
+    p.add_argument("--llat-device", default="cuda")
     p.add_argument("--start", default=None, metavar="YYYYMMDDHH",
                    help="one initial time by name, instead of counting rows with "
                         "--start-index. Which one matters: 202421W at "
