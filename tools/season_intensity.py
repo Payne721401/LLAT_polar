@@ -99,9 +99,11 @@ def collect(run_dir, era5_dir, tc_id, init_str, args):
             continue
         valid = init + datetime.timedelta(hours=h)
         try:
-            f = pf.load_run(run_dir, h, meta)
+            # peak() reads msl and collect() reads lon/lat; nothing here touches
+            # the upper air, which is 81 % of both files.
+            f = pf.load_run(run_dir, h, meta, upper=False)
             n = f.lon.shape[0]
-            t = pf.load_era5(era5_dir, tc_id, valid, n, meta)
+            t = pf.load_era5(era5_dir, tc_id, valid, n, meta, upper=False)
         except (FileNotFoundError, OSError, KeyError):
             continue
         fp, fw = peak(f, args.search_deg)

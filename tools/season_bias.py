@@ -47,8 +47,7 @@ def displacements(run_dir, era5_dir, tc_id, init_str, window_h=24):
         try:
             flon, flat, n = ss.forecast_centre(run_dir, h, meta)
             tr[h] = ss.truth_centre(era5_dir, tc_id,
-                                    init + datetime.timedelta(hours=h),
-                                    n, meta)
+                                    init + datetime.timedelta(hours=h), n)
         except (FileNotFoundError, OSError):
             continue
         fc[h] = (flon, flat)

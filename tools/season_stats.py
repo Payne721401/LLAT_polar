@@ -49,10 +49,22 @@ pf = te.pf
 _TRUTH = {}
 
 
-def truth_centre(era5_dir, tc_id, valid, n, meta):
+def truth_centre(era5_dir, tc_id, valid, n):
+    """Where the truth says the storm is, reading only the coordinate arrays.
+
+    Misses are cached as well as hits. ERA5 stops when the storm does while the
+    forecast runs on, so before this every case of the same storm retried the
+    same absent file at every lead past the end - one filesystem round trip
+    each, on NFS, for an answer already known.
+    """
     key = (tc_id, valid)
     if key not in _TRUTH:
-        _TRUTH[key] = te.centre(pf.load_era5(era5_dir, tc_id, valid, n, meta))
+        try:
+            _TRUTH[key] = pf.era5_centre(era5_dir, tc_id, valid, n)
+        except (FileNotFoundError, OSError):
+            _TRUTH[key] = None
+    if _TRUTH[key] is None:
+        raise FileNotFoundError(f"no ERA5 truth for {tc_id} at {valid:%Y%m%d%H}")
     return _TRUTH[key]
 
 
@@ -120,8 +132,7 @@ def errors_for(run_dir, era5_dir, tc_id, init_str):
         try:
             flon, flat, n = forecast_centre(run_dir, h, meta)
             tlon, tlat = truth_centre(era5_dir, tc_id,
-                                      init + datetime.timedelta(hours=h),
-                                      n, meta)
+                                      init + datetime.timedelta(hours=h), n)
         except (FileNotFoundError, OSError):
             continue                      # ERA5 is 6-hourly; storms also end
         ex, ey = te.km(flon - tlon, flat - tlat, tlat)

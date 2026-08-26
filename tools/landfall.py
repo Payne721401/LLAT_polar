@@ -161,8 +161,10 @@ def main(args):
         t0 = None
         for h in leads:
             try:
+                # landmask and msl are both surface fields.
                 f = pf.load_era5(era5_dir, tc,
-                                 init + datetime.timedelta(hours=h), 81, meta)
+                                 init + datetime.timedelta(hours=h), 81, meta,
+                                 upper=False)
             except (FileNotFoundError, OSError, KeyError):
                 continue
             if over_land(f, args.core_deg) > args.land_threshold:
@@ -180,12 +182,12 @@ def main(args):
         if want_e:
             try:
                 a = centre_mslp(pf.load_era5(
-                    era5_dir, tc, init + datetime.timedelta(hours=t0), 81, meta),
-                    args.search_deg)
+                    era5_dir, tc, init + datetime.timedelta(hours=t0), 81, meta,
+                    upper=False), args.search_deg)
                 b = centre_mslp(pf.load_era5(
                     era5_dir, tc,
-                    init + datetime.timedelta(hours=t0 + args.window), 81, meta),
-                    args.search_deg)
+                    init + datetime.timedelta(hours=t0 + args.window), 81, meta,
+                    upper=False), args.search_deg)
                 rec["ERA5"] = b - a
             except (FileNotFoundError, OSError, KeyError):
                 ok = False
@@ -201,10 +203,10 @@ def main(args):
         for label, _ in runs:
             try:
                 m = pf.read_meta(found[label][(tc, init_s)])
-                a = centre_mslp(pf.load_run(found[label][(tc, init_s)], t0, m),
-                                args.search_deg)
+                a = centre_mslp(pf.load_run(found[label][(tc, init_s)], t0, m,
+                                            upper=False), args.search_deg)
                 b = centre_mslp(pf.load_run(found[label][(tc, init_s)],
-                                            t0 + args.window, m),
+                                            t0 + args.window, m, upper=False),
                                 args.search_deg)
                 rec[label] = b - a
             except (FileNotFoundError, OSError, KeyError):

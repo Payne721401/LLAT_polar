@@ -125,9 +125,18 @@ def available_leads(run_dir):
     return sorted(out)
 
 
-def load_run(run_dir, lead, meta=None):
+def load_run(run_dir, lead, meta=None, upper=True):
+    """One forecast lead. upper=False skips output_upper_*.npy.
+
+    That file is 2.5 MB against the surface file's 0.5 MB and holds
+    13 x 81 x 81 x 6. Anything wanting only msl or the coordinate channels -
+    season_intensity, landfall - was pulling five times what it read, once per
+    lead per case, across a network filesystem. Field never touches `upper` in
+    __init__, so None is safe as long as .u() is not called.
+    """
     d = forecast_dir(run_dir)
-    up = np.load(os.path.join(d, f"output_upper_{lead:0>3}h.npy"))
+    up = (np.load(os.path.join(d, f"output_upper_{lead:0>3}h.npy"))
+          if upper else None)
     sfc = np.load(os.path.join(d, f"output_sfc_{lead:0>3}h.npy"))
     return Field(up, sfc, meta)
 
@@ -135,13 +144,51 @@ def load_run(run_dir, lead, meta=None):
 _NOTED = set()
 
 
-def load_era5(era5_dir, tc_id, valid_time, n, meta=None):
+def era5_path(era5_dir, tc_id, valid_time):
+    """Where the truth for one valid time lives."""
+    return os.path.join(os.path.expanduser(era5_dir),
+                        f"{tc_id}_{valid_time:%Y%m%d%H}_combined.nc")
+
+
+def era5_centre(era5_dir, tc_id, valid_time, n):
+    """The truth's domain centre, from the coordinate arrays alone.
+
+    A combined.nc is cut around the storm, so the mean of its longitude and
+    latitude IS the centre - exactly what track_error.centre computes from a
+    loaded Field. Reaching it through load_era5 stacks 13 x 81 x 81 x 6 of upper
+    air and eighteen surface variables and discards all of it: over a 337-case
+    season, gigabytes off a network filesystem for two numbers per lead.
+    season_stats.forecast_centre already documents making this saving on the
+    forecast side; the truth side never got it.
+
+    The crop is not skippable. When ny - n is odd the centre crop is asymmetric
+    and the mean shifts half a cell - 14 km at 0.25 degrees.
+
+    meshgrid then nanmean rather than the mean of the 1-D arrays, to keep the
+    same summation as centre() did. 81 x 81 is free; 13 x 81 x 81 x 6 was not.
+
+    Not bit-identical to the old path: there the coordinates were concatenated
+    into the surface stack first, so they could be demoted to float32. The
+    disagreement is order 1e-6 degrees, a tenth of a metre, against a 0.25
+    degree cell - so a real regression (a wrong crop, a swapped axis) still
+    shows up as at least half a cell, and cannot hide in it.
+    """
+    import xarray as xr
+
+    with xr.open_dataset(era5_path(era5_dir, tc_id, valid_time)) as ds:
+        lons, lats = ds.longitude.values, ds.latitude.values
+    if len(lats) != n or len(lons) != n:
+        oy, ox = (len(lats) - n) // 2, (len(lons) - n) // 2
+        lats, lons = lats[oy:oy + n], lons[ox:ox + n]
+    lon, lat = np.meshgrid(lons, lats)
+    return float(np.nanmean(lon)), float(np.nanmean(lat))
+
+
+def load_era5(era5_dir, tc_id, valid_time, n, meta=None, upper=True):
     """Truth from the combined.nc at the valid time, cropped to the model domain."""
     import xarray as xr
 
-    p = os.path.join(os.path.expanduser(era5_dir),
-                     f"{tc_id}_{valid_time:%Y%m%d%H}_combined.nc")
-    with xr.open_dataset(p) as ds:
+    with xr.open_dataset(era5_path(era5_dir, tc_id, valid_time)) as ds:
         ny, nx = ds.sizes['latitude'], ds.sizes['longitude']
         if (ny, nx) != (n, n):
             oy, ox = (ny - n) // 2, (nx - n) // 2
@@ -149,7 +196,8 @@ def load_era5(era5_dir, tc_id, valid_time, n, meta=None):
                          longitude=np.arange(ox, ox + n))
         names = (meta or {}).get('surface_vars', SFC)
         upper_names = (meta or {}).get('upper_vars', UPPER)
-        up = np.stack([np.squeeze(ds[v].values) for v in upper_names], axis=-1)
+        up = (np.stack([np.squeeze(ds[v].values) for v in upper_names], axis=-1)
+              if upper else None)
 
         # A combined.nc holds raw ERA5. The derived channels - landmask, f,
         # solar, sst_filled, the time encodings - are produced by
@@ -158,7 +206,9 @@ def load_era5(era5_dir, tc_id, valid_time, n, meta=None):
         # solar position per point), take what exists and leave the rest NaN;
         # of the derived fields only landmask is used for plotting, and that
         # can be recovered exactly, see below.
-        shape = np.squeeze(ds[upper_names[0]].values).shape[-2:]
+        # From the dimensions rather than by reading a variable: under
+        # upper=False this was the one line still pulling a 13-level field.
+        shape = (ds.sizes['latitude'], ds.sizes['longitude'])
         missing = []
         cols = []
         for v in names[:-2]:
