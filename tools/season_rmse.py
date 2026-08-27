@@ -77,22 +77,22 @@ def main(args):
             v, lev = tok.split(":")
             upper_pairs.append((v.strip(), int(lev)))
 
-    runs = []
-    for spec in args.runs:
-        label, _, path = spec.partition("=")
-        runs.append((label or os.path.basename(spec.rstrip("/")), path or spec))
+    # ss.parse_run, so a run spec can name its own mode or model directory and
+    # one table can hold one-way and two-way side by side. --mode stays the
+    # default for specs that do not say.
+    runs = [ss.parse_run(spec, args.mode) for spec in args.runs]
 
     found = {}
-    for label, path in runs:
+    for label, path, mode, subdir in runs:
         found[label] = {(tc, i): p for tc, i, p in
-                        ss.find_starts(path, args.version, args.mode)}
+                        ss.find_starts(path, args.version, mode, subdir)}
         print("  " + label + ": " + str(len(found[label])) + " cases")
     common = sorted(set.intersection(*(set(v) for v in found.values())))
     print("comparing on the " + str(len(common)) +
           " initial times every run has")
 
     # acc[label][var][lead] = [sum sq error, sum error, count]
-    acc = {l: {} for l, _ in runs}
+    acc = {l: {} for l, *_ in runs}
     leads = list(range(0, int(args.max_lead) + 1, args.every))
 
     for n, (tc, init_s) in enumerate(common):
@@ -102,7 +102,7 @@ def main(args):
         for h in leads:
             valid = init + datetime.timedelta(hours=h)
             got, meta = {}, None
-            for label, _ in runs:
+            for label, *_ in runs:
                 try:
                     meta = pf.read_meta(found[label][(tc, init_s)])
                     got[label] = pf.load_run(found[label][(tc, init_s)], h, meta)
@@ -141,7 +141,7 @@ def main(args):
             print("    " + str(n + 1) + "/" + str(len(common)), flush=True)
 
     order = sfc_names + [v + str(lev) for v, lev in upper_pairs]
-    order = [v for v in order if any(v in acc[l] for l, _ in runs)]
+    order = [v for v in order if any(v in acc[l] for l, *_ in runs)]
 
     for kind in ("RMSE", "bias"):
         print("\n===== " + kind + " against ERA5 =====")
@@ -149,7 +149,7 @@ def main(args):
         print(head + "".join("{:>10}h".format(h) for h in leads))
         print("-" * (24 + 11 * len(leads)))
         for var in order:
-            for label, _ in runs:
+            for label, *_ in runs:
                 cells = []
                 for h in leads:
                     s = acc[label].get(var, {}).get(h)
@@ -168,7 +168,7 @@ def main(args):
         os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
         with open(out, "w", encoding="utf-8") as fh:
             fh.write("run,variable,lead_h,rmse,bias,n\n")
-            for label, _ in runs:
+            for label, *_ in runs:
                 for var in order:
                     for h in leads:
                         s = acc[label].get(var, {}).get(h)
@@ -275,7 +275,7 @@ def draw(acc, order, runs, leads, args):
 
     out = os.path.expanduser(args.out or os.path.join(
         "analysis", "figures", "season",
-        "rmse_" + "_".join(l.replace("/", "-") for l, _ in runs) + ".png"))
+        "rmse_" + "_".join(l.replace("/", "-") for l, *_ in runs) + ".png"))
     os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
     fig.tight_layout()
     fig.savefig(out, dpi=140)

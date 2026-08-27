@@ -66,3 +66,8 @@ analysis/figures/
 
 # Personal command scratchpad, not documentation - see tool docstrings.
 COMMANDS.md
+
+# Results tables are the project output, not scratch: they must survive a machine
+# change and they are what a report quotes. Everything else under analysis/ stays
+# local.
+!analysis/season_results.md

@@ -117,17 +117,16 @@ def collect(run_dir, era5_dir, tc_id, init_str, args):
 def main(args):
     curves = {}
     era5_root = os.path.expanduser(args.era5_root)
-    runs = []
-    for spec in args.runs:
-        label, _, path = spec.partition('=')
-        runs.append((label or os.path.basename(spec.rstrip('/')), path or spec))
+    # ss.parse_run: a spec may name its own mode or model directory, so one
+    # figure can hold one-way and two-way together on the same paired cases.
+    runs = [ss.parse_run(spec, args.mode) for spec in args.runs]
 
     # Same pairing discipline as season_stats: only cases every run produced, so
     # a run that happens to have finished more of them cannot look better by
     # covering an easier subset.
     found = {}
-    for label, path in runs:
-        starts = ss.find_starts(path, args.version, args.mode)
+    for label, path, mode, subdir in runs:
+        starts = ss.find_starts(path, args.version, mode, subdir)
         found[label] = {(tc, init): p for tc, init, p in starts}
         print(f"  {label}: {len(found[label])} cases")
     common = set.intersection(*(set(v) for v in found.values())) \
@@ -136,7 +135,7 @@ def main(args):
         print(f"comparing on the {len(common)} initial times every run has; "
               f"pass --unpaired to use each run's full set")
 
-    for label, _path in runs:
+    for label, *_ in runs:
         cases = sorted(common if common is not None else found[label])
         rows = {}
         for i, (tc, init) in enumerate(cases):
@@ -221,7 +220,7 @@ def draw(curves, runs, args):
 
     out = os.path.expanduser(args.out or os.path.join(
         "analysis", "figures", "season",
-        "intensity_" + "_".join(l.replace('/', '-') for l, _ in runs) + ".png"))
+        "intensity_" + "_".join(l.replace('/', '-') for l, *_ in runs) + ".png"))
 
     def band(a_, hs, samples, colour, label, min_n=1):
         """One series in season_stats' convention: median, IQR, mean.
