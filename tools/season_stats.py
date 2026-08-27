@@ -184,15 +184,34 @@ def errors_for(run_dir, era5_dir, tc_id, init_str, bt=None):
 
 
 def collect(root, era5_root, version, mode, limit=0, keep=None, subdir=None,
-            track_csv=None):
-    """Every case's error curve, keyed by lead, plus the per-case curves."""
+            track_csv=None, jobs=1):
+    """Every case's error curve, keyed by lead, plus the per-case curves.
+
+    jobs > 1 spreads the cases over threads. This is worth doing because the
+    work is not computation: a two-run season measured 19 minutes of wall clock
+    against 27 seconds of CPU, so 97 % of it was the process blocked on a
+    network filesystem. Every one of those waits releases the GIL, so threads
+    overlap them; more of them in flight is the only thing that helps, and no
+    amount of faster arithmetic - or a GPU - touches it.
+
+    Threads, not processes: the payload is a few floats per case, and the cost
+    of shipping it between processes would eat the gain. The two module caches
+    are dicts read and written under the GIL, so the worst a race does is
+    compute the same truth centre twice and store the same answer.
+
+    Results are merged in the original sorted order, so the output does not
+    depend on which thread finished first.
+    """
     by_lead, per_case, cases, skipped = {}, [], 0, []
     starts = find_starts(root, version, mode, subdir)
     if keep is not None:
         starts = [s for s in starts if (s[0], s[1]) in keep]
     if limit:
         starts = starts[:limit]
-    for tc, init, path in starts:
+
+    def one(start):
+        """(tc, init, path, errors, skip_reason) - never raises."""
+        tc, init, path = start
         era5 = os.path.join(os.path.expanduser(era5_root), tc, 'ERA5',
                             'for_DLAMPty')
         bt = None
@@ -201,14 +220,24 @@ def collect(root, era5_root, version, mode, limit=0, keep=None, subdir=None,
                 _BT[tc] = te.read_best_track(track_csv, tc, "position")
             bt = _BT[tc]
             if not bt:
-                skipped.append(f"{tc} (no best-track position)")
-                continue
+                return tc, init, path, None, f"{tc} (no best-track position)"
         elif not os.path.isdir(era5):
-            skipped.append(f"{tc} (no ERA5 directory)")
-            continue
+            return tc, init, path, None, f"{tc} (no ERA5 directory)"
         e = errors_for(path, era5, tc, init, bt)
         if not e:
-            skipped.append(f"{tc}/{init} (no matching truth)")
+            return tc, init, path, None, f"{tc}/{init} (no matching truth)"
+        return tc, init, path, e, None
+
+    if jobs > 1 and len(starts) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=jobs) as ex:
+            results = list(ex.map(one, starts))
+    else:
+        results = [one(s) for s in starts]
+
+    for tc, init, path, e, reason in results:
+        if reason:
+            skipped.append(reason)
             continue
         cases += 1
         per_case.append((tc, init, path, e))
@@ -358,7 +387,7 @@ def main(args):
     for name, root, mode, subdir in runs:
         by_lead, n_cases, skipped, per_case = collect(
             root, args.era5_root, args.version, mode, args.limit, keep,
-            subdir, track_csv)
+            subdir, track_csv, args.jobs)
         seen = sorted({p.split(os.sep)[-2] for _, _, p, _ in per_case})
         print(f"  {name}: {n_cases} cases under {', '.join(seen) or '(none)'}",
               flush=True)
@@ -458,6 +487,11 @@ if __name__ == "__main__":
     p.add_argument("--worst-at", type=int, default=120,
                    help="the lead to rank them at")
     p.add_argument("--print-every", type=int, default=24)
+    p.add_argument("--jobs", type=int, default=8,
+                   help="cases read in parallel. The work is 97 %% filesystem "
+                        "wait, not computation, so this is the only thing that "
+                        "makes it faster - a GPU does nothing here. Drop to 1 "
+                        "if the filesystem is the shared bottleneck")
     p.add_argument("--out", default="season.png")
     p.add_argument("--dpi", type=int, default=150)
     main(p.parse_args())
