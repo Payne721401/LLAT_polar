@@ -305,6 +305,13 @@ Chat and the analysis reports outside the repo stay in 繁體中文.
 Pass multi-line commit messages via a file (`git commit -F`); backticks in a shell
 heredoc get eaten by command substitution and have silently truncated a message here before.
 
+### Draw it in ASCII when explaining
+
+Use ASCII to visualize content when explaining concepts. A grid, a coupling geometry, a
+pipeline, the shape of a tensor or where a boundary sits is understood faster from six
+lines of characters than from a paragraph, and unlike a figure it costs nothing to make
+and survives in the transcript.
+
 ### Tests need a negative control
 
 A test that cannot fail proves nothing. Twice a test here passed while measuring nothing:
