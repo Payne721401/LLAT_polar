@@ -40,8 +40,9 @@ DEG_KM = 111.32
 def read_best_track(csv_dir, tc_id, want="pressure"):
     """{datetime: value} from the best-track CSV, if it carries the column.
 
-    want="pressure" gives central pressure in hPa, want="position" gives
-    (lon, lat) in degrees. One function because the hard parts - finding the
+    want="pressure" gives central pressure in hPa, "position" gives (lon, lat)
+    in degrees, "vmax" the wind in the file's own units (kt for the JMA lists),
+    "class" the agency grade (JMA: 2 TD, 3 TS, 4 STS, 5 TY, 6 extratropical). One function because the hard parts - finding the
     columns and rebuilding the timestamp - are the same either way, and two
     copies of them would drift.
 
@@ -77,6 +78,10 @@ def read_best_track(csv_dir, tc_id, want="pressure"):
     if want == "position":
         cols = [find(("lon", "longitude", "long"), ("lon",)),
                 find(("lat", "latitude"), ("lat",))]
+    elif want == "vmax":
+        cols = [find(("vmax", "wind", "wind_kt", "max_wind"), ("wind", "vmax"))]
+    elif want == "class":
+        cols = [find(("class", "grade", "type"), ("class", "grade"))]
     else:
         cols = [find(("mslp", "pres", "pressure", "min_pres", "cp", "slp"),
                      ("mslp", "pressure", "pres", "slp"))]
