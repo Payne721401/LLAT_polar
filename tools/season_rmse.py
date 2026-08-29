@@ -48,6 +48,27 @@ def _load(name):
 
 
 ss = _load("season_stats")
+
+_CLIP = {}
+
+
+def clip_times(args, tc_id):
+    """Valid times with a best-track record, or None when not clipping.
+
+    The ERA5 boxes these tools read were cut along a track that outlives the
+    agency's: 202408W's run 3.5 days past its last best-track entry, following a
+    1010.8 hPa remnant to 40N and the dateline. Scoring those leads measures how
+    well a model chases a system that no longer exists, and on the track
+    statistics it was large enough to hide a 20-28 % difference between the two
+    models. The paper's rule is one sample per best-track record.
+    """
+    if not getattr(args, "clip_to_best_track", False):
+        return None
+    if tc_id not in _CLIP:
+        _CLIP[tc_id] = set(ss.te.read_best_track(args.track_csv, tc_id,
+                                                 "position"))
+    return _CLIP[tc_id]
+
 pf = ss.pf
 
 
@@ -99,8 +120,11 @@ def main(args):
         if args.limit and n >= args.limit:
             break
         init = datetime.datetime.strptime(init_s, "%Y%m%d%H")
+        clip = clip_times(args, tc)
         for h in leads:
             valid = init + datetime.timedelta(hours=h)
+            if clip is not None and valid not in clip:
+                continue
             got, meta = {}, None
             for label, *_ in runs:
                 try:
@@ -288,6 +312,15 @@ if __name__ == "__main__":
     p.add_argument("--runs", action="append", required=True,
                    metavar="[NAME=]PATH")
     p.add_argument("--era5-root", required=True)
+    p.add_argument("--track-csv", default=None,
+                   help="directory of per-storm best-track CSVs, for "
+                        "--clip-to-best-track")
+    p.add_argument("--clip-to-best-track", action="store_true",
+                   help="score only leads that have a best-track record. "
+                        "Without it the ERA5 boxes carry the storm days past "
+                        "the agency's last entry and those leads are graded "
+                        "like any other; on the track statistics that hid a "
+                        "20-28 %% difference between the models")
     p.add_argument("--vars", default="msl,u10,v10,t2m,tcwv,tp",
                    help="surface channels, comma separated")
     p.add_argument("--upper", default="z:500,t:850,u:850,v:850,q:700",
