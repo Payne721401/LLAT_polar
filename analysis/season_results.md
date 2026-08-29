@@ -84,6 +84,74 @@ beyond has n ≤ 35 and should not be quoted.
 
 ---
 
+## 1b. The same four runs, clipped to the best-track record
+
+```
+python tools/season_stats.py --era5-root /wk2/yungyun/FCNV2_TC   --track-csv /wk2/yungyun/ERA5_2024_for_TC/TC_list_JMA_v2 --clip-to-best-track   --runs ... (as above) --csv analysis/s_B.csv
+```
+
+Section 1 scores every lead that has an ERA5 box. Those boxes were cut along a
+separate ERA5-derived track that outlives the agency record - 202408W's run 3.5
+days past its last best-track entry, following a 1010.8 hPa remnant to 40N and
+the dateline. This table scores only leads with a best-track record, which is
+the rule the paper states.
+
+Median position error, km. `n` is what survives the clip:
+
+| lead | n | cart_1way | cart_2way | polar_1way | polar_2way |
+|-----:|--:|----------:|----------:|-----------:|-----------:|
+|  24h | 267 |  77 |  76 |  78 |  81 |
+|  48h | 215 | 131 | 135 | 167 | 165 |
+|  72h | 166 | 203 | 209 | 245 | 264 |
+|  96h | 127 | 281 | 293 | 344 | 362 |
+| 120h |  91 | 382 | 359 | 478 | 570 |
+| 144h |  59 | 505 | 424 | 608 | 737 |
+| 168h |  34 | 658 | 664 | 845 | 1052 |
+| 192h |  20 | 1092 | 871 | 1708 | 2145 |
+
+Between 30 and 45 % of the scored leads were beyond the best track — 131 cases
+at +120 h become 91, 61 at +168 h become 34.
+
+### This reverses the long-lead reading
+
+polar_1way against cart_1way, median:
+
+| lead | section 1 | clipped |
+|-----:|----------:|--------:|
+| 120h | +5.5 % | **+25.1 %** |
+| 144h | +1.6 % | **+20.4 %** |
+| 168h | **-1.3 %** (polar ahead) | **+28.4 %** |
+
+**The polar model does not catch up at long lead.** Both models were being
+scored against a dissipated system, and that noise is large enough to swamp the
+difference between them. On the leads where a tropical cyclone still existed,
+the polar model is 20-28 % behind throughout.
+
+### Two-way, unchanged in sign and cleaner in size
+
+Change in median when the feedback is switched on:
+
+| lead | Cartesian | polar |
+|-----:|----------:|------:|
+| 120h |  **-6 %** | **+19 %** |
+| 144h | **-16 %** | **+21 %** |
+| 168h |  +1 % | **+24 %** |
+| 192h | **-20 %** | **+26 %** |
+
+Head to head at +120 h, 91 cases: `cart_2way` closer in **53 of 91 (58 %)** —
+the same rate as the unclipped 76 of 131.
+
+### The worst cases are different cases now
+
+202408W is gone from every list: its peak was 35 kt and its whole contribution
+came from leads after the agency stopped tracking it. What remains, in all four
+runs, is **202410W** and **202405W** — genuinely hard cases rather than
+verification artefacts.
+
++192 h still has n = 20 and should not be quoted.
+
+---
+
 ## 2. Per-variable RMSE, one-way, 192 h
 
 ```
