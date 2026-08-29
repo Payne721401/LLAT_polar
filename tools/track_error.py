@@ -53,7 +53,13 @@ def read_best_track(csv_dir, tc_id, want="pressure"):
     if not os.path.exists(p):
         return {}
     out = {}
-    with open(p, newline="", encoding="utf-8", errors="replace") as fh:
+    # utf-8-sig, not utf-8. 23 of the 26 JMA lists in this project begin with a
+    # byte-order mark, so their first column parses as "﻿Year" and every
+    # lookup of "year" misses. The header looks identical in a terminal, in head,
+    # and in the printed fieldnames unless they are repr'd - the function simply
+    # returned {} and the caller read that as "this file has no track". utf-8-sig
+    # strips a BOM when present and is a no-op when it is not.
+    with open(p, newline="", encoding="utf-8-sig", errors="replace") as fh:
         rows = list(csv.DictReader(fh))
     if not rows:
         return {}
