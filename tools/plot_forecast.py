@@ -144,10 +144,22 @@ def load_run(run_dir, lead, meta=None, upper=True):
 _NOTED = set()
 
 
-def era5_path(era5_dir, tc_id, valid_time):
-    """Where the truth for one valid time lives."""
-    return os.path.join(os.path.expanduser(era5_dir),
-                        f"{tc_id}_{valid_time:%Y%m%d%H}_combined.nc")
+def era5_path(era5_dir, tc_id, valid_time, must_exist=False):
+    """Where the truth for one valid time lives.
+
+    must_exist raises before xarray is asked to open it. Callers already treat
+    a missing truth as ordinary - ERA5 is 6-hourly, the forecast is 3-hourly,
+    and storms end - but letting the netCDF backend discover that means the
+    HDF5 C library writes a six-line diagnostic straight to stderr, which
+    Python cannot intercept because it never passes through an exception. One
+    stat() call keeps HDF5 out of it. With --jobs 8 those blocks interleave and
+    a routine skipped lead reads like a crash.
+    """
+    p = os.path.join(os.path.expanduser(era5_dir),
+                     f"{tc_id}_{valid_time:%Y%m%d%H}_combined.nc")
+    if must_exist and not os.path.exists(p):
+        raise FileNotFoundError(p)
+    return p
 
 
 def era5_centre(era5_dir, tc_id, valid_time, n):
@@ -175,7 +187,8 @@ def era5_centre(era5_dir, tc_id, valid_time, n):
     """
     import xarray as xr
 
-    with xr.open_dataset(era5_path(era5_dir, tc_id, valid_time)) as ds:
+    with xr.open_dataset(
+            era5_path(era5_dir, tc_id, valid_time, must_exist=True)) as ds:
         lons, lats = ds.longitude.values, ds.latitude.values
     if len(lats) != n or len(lons) != n:
         oy, ox = (len(lats) - n) // 2, (len(lons) - n) // 2
@@ -188,7 +201,8 @@ def load_era5(era5_dir, tc_id, valid_time, n, meta=None, upper=True):
     """Truth from the combined.nc at the valid time, cropped to the model domain."""
     import xarray as xr
 
-    with xr.open_dataset(era5_path(era5_dir, tc_id, valid_time)) as ds:
+    with xr.open_dataset(
+            era5_path(era5_dir, tc_id, valid_time, must_exist=True)) as ds:
         ny, nx = ds.sizes['latitude'], ds.sizes['longitude']
         if (ny, nx) != (n, n):
             oy, ox = (ny - n) // 2, (nx - n) // 2
