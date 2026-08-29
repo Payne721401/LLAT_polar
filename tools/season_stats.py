@@ -274,6 +274,86 @@ def collect(root, era5_root, version, mode, limit=0, keep=None, subdir=None,
     return by_lead, cases, skipped, per_case
 
 
+def head_to_head(all_cases, runs, args):
+    """Which cases the second run wins and loses, against the first.
+
+    A median says the polar model is 8 % behind; it cannot say whether that is
+    every case slightly behind or a handful catastrophically so, and those call
+    for different work. Ranking each case by the DIFFERENCE separates them, and
+    the two tails are the cases worth plotting: one shows what the geometry
+    buys, the other what it costs.
+
+    Ranked at a single lead, because a case can win at 24 h and lose at 120 and
+    a rank over all leads at once would average that away.
+    """
+    if len(runs) < 2:
+        return
+    base, other = runs[0][0], runs[1][0]
+    h = args.worst_at
+    rows = []
+    for key in set(all_cases[base]) & set(all_cases[other]):
+        a = all_cases[base][key].get(h)
+        b = all_cases[other][key].get(h)
+        if a is None or b is None:
+            continue
+        rows.append((b - a, a, b, key))
+    if not rows:
+        print("\nno case has both runs at +" + str(h) + " h")
+        return
+    rows.sort()
+    n = max(1, min(args.worst or 10, len(rows) // 2))
+    wins = sum(1 for r in rows if r[0] < 0)
+    print("\n===== " + other + " against " + base + " at +" + str(h) +
+          " h, " + str(len(rows)) + " cases =====")
+    print("  " + other + " is closer in " + str(wins) + " of " + str(len(rows)) +
+          " (" + format(100.0 * wins / len(rows), ".0f") + " %)")
+    for title, sel in (("BEST for " + other, rows[:n]),
+                       ("WORST for " + other, rows[-n:][::-1])):
+        print("\n  " + title)
+        print("  {:<10}{:<12}{:>12}{:>12}{:>10}".format(
+            "storm", "init", base[:11], other[:11], "diff"))
+        for d, a, b, (tc, init) in sel:
+            print("  {:<10}{:<12}{:>11.0f}k{:>11.0f}k{:>+9.0f}k".format(
+                tc, init, a, b, d))
+    if args.csv:
+        out = os.path.expanduser(args.csv)
+        os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write("run,tc,init,lead_h,error_km\n")
+            for name in all_cases:
+                for (tc, init), e in sorted(all_cases[name].items()):
+                    for lead in sorted(e):
+                        fh.write("{},{},{},{},{:.2f}\n".format(
+                            name, tc, init, lead, e[lead]))
+        print("\nwrote " + out)
+
+
+def report_worst(per_case, era5_root, n_worst, at_lead=None):
+    """Name the worst cases, with a command that plots each one.
+
+    Finding them by hand means reading a table, picking a storm, then assembling
+    a path out of three conventions - which is how a command full of {TCID}
+    placeholders gets run verbatim.
+    """
+    scored = []
+    for tc, init, path, e in per_case:
+        if not e:
+            continue
+        h = at_lead if at_lead in e else max(e)
+        scored.append((e[h], h, tc, init, path))
+    scored.sort(reverse=True)
+
+    print(f"\nworst {min(n_worst, len(scored))} cases"
+          + (f" at +{at_lead} h" if at_lead else " at their last common lead"))
+    for err, h, tc, init, path in scored[:n_worst]:
+        print(f"\n  {tc} {init}   {err:.0f} km at +{h} h")
+        print(f"    python tools/track_error.py \\\n"
+              f"      --run \"{tc}={path}\" \\\n"
+              f"      --era5 {os.path.join(era5_root, tc, 'ERA5', 'for_DLAMPty')} \\\n"
+              f"      --tc-id {tc} --init {init} \\\n"
+              f"      --out analysis/figures/forecasts/{tc}/{init}/track.png")
+
+
 def parse_run(spec, default_mode):
     """"label=root", optionally "label=root@selector" -> (label, root, mode, subdir).
 
