@@ -187,6 +187,24 @@ comparable to an all-cases mean. Stratifying is roadmap P3.
   `202506W` and `202518W` are present in some sweeps and absent from others,
   which is why the unpaired counts differ (one-way 338, two-way 339) while the
   intersection is 319.
+- **The 2024 sample is 26 storms in both the one-way and the two-way sweep,
+  which is exactly the paper's 26.** The paper describes its selection as "all
+  2024 typhoons, i.e. with maximum intensity (Vmax) greater than 65 kt", but
+  that criterion does not reproduce its own count: IBTrACS v04r01 has 15 WP
+  storms reaching 65 kt on `USA_WIND` in 2024 and 13 on `WMO_WIND`. 26 is the
+  number of named 2024 WNP storms. So the samples already match and
+  `--min-lifetime-vmax 65` would cut this set to 15 and move it *away* from the
+  paper's. Do not apply it.
+- Verification truth is JMA (`TC_list_JMA_v2`); the paper's is IBTrACS. For
+  position this is not worth changing: the WMO position for the WNP comes from
+  RSMC Tokyo, i.e. JMA, and the ERA5 box centres were measured at about 30 km
+  from their own pressure minimum against errors of 300-2500 km. It would
+  matter for intensity, where the agency and the averaging period differ
+  (JMA 10-minute against JTWC 1-minute, roughly 12 % apart).
+- **ERA5 boxes outlive the best track.** 202408W's JMA record ends 2024-08-15
+  18Z; its `for_DLAMPty` boxes run to 08-19 06Z, cut along a separate
+  ERA5-derived track that follows a 1010.8 hPa remnant to 40N and the dateline.
+  Every table above without `--clip-to-best-track` scores those leads.
 - `2_way_circle_couple_model_v60_e3268` is a **different model** with DA and
   nudging, not the v57_5d control. Every Cartesian two-way number here comes
   from the unsuffixed `2_way_circle_couple_model`.
