@@ -52,25 +52,20 @@ def _load(name):
 
 ss = _load("season_stats")
 
-_CLIP = {}
-
-
-def clip_times(args, tc_id):
-    """Valid times with a best-track record, or None when not clipping.
+def clip_times(args, tc_id, init_str, run_dir):
+    """Valid times with an IBTrACS record, or None when not clipping.
 
     The ERA5 boxes these tools read were cut along a track that outlives the
     agency's: 202408W's run 3.5 days past its last best-track entry, following a
     1010.8 hPa remnant to 40N and the dateline. Scoring those leads measures how
     well a model chases a system that no longer exists, and on the track
-    statistics it was large enough to hide a 20-28 % difference between the two
-    models. The paper's rule is one sample per best-track record.
+    statistics it hid a 20-28 % difference between the two models. The paper's
+    rule is one sample per best-track record, and its archive is IBTrACS.
     """
     if not getattr(args, "clip_to_best_track", False):
         return None
-    if tc_id not in _CLIP:
-        _CLIP[tc_id] = set(ss.te.read_best_track(args.track_csv, tc_id,
-                                                 "position"))
-    return _CLIP[tc_id]
+    sid = ss.storm_sid(args.ibtracs, tc_id, init_str, run_dir)
+    return ss.ibt.times(args.ibtracs, sid) if sid else set()
 
 pf = ss.pf
 
@@ -114,7 +109,7 @@ def collect(run_dir, era5_dir, tc_id, init_str, args):
     """Per-lead (dp, dw, track error) for one case, or {} if truth is missing."""
     init = datetime.datetime.strptime(init_str, "%Y%m%d%H")
     meta = pf.read_meta(run_dir)
-    clip = clip_times(args, tc_id)
+    clip = clip_times(args, tc_id, init_str, run_dir)
     out = {}
     for h in pf.available_leads(run_dir):
         if args.max_lead is not None and h > args.max_lead:
@@ -332,15 +327,14 @@ if __name__ == "__main__":
     p.add_argument("--runs", action="append", required=True,
                    metavar="[NAME=]PATH")
     p.add_argument("--era5-root", required=True)
-    p.add_argument("--track-csv", default=None,
-                   help="directory of per-storm best-track CSVs, for "
-                        "--clip-to-best-track")
+    p.add_argument("--ibtracs", default=None, metavar="CSV",
+                   help="IBTrACS basin file, for --clip-to-best-track. Storms "
+                        "are matched by position and time, never by number")
     p.add_argument("--clip-to-best-track", action="store_true",
-                   help="score only leads that have a best-track record. "
-                        "Without it the ERA5 boxes carry the storm days past "
-                        "the agency's last entry and those leads are graded "
-                        "like any other; on the track statistics that hid a "
-                        "20-28 %% difference between the models")
+                   help="score only leads with an IBTrACS record. Without it "
+                        "the ERA5 boxes carry the storm days past the last "
+                        "entry and those leads are graded like any other; that "
+                        "hid a 20-28 %% difference between the models on track")
     p.add_argument("--version", default=None)
     p.add_argument("--mode", default="one-way",
                    choices=("one-way", "two-way", "standalone"))

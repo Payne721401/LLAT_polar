@@ -43,12 +43,19 @@ te = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(te)
 pf = te.pf
 
+_ispec = importlib.util.spec_from_file_location(
+    "ibtracs", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "ibtracs.py"))
+ibt = importlib.util.module_from_spec(_ispec)
+_ispec.loader.exec_module(ibt)
+
 # (tc_id, valid_time) -> centre. Starts overlap, so the +24 h truth of one is the
 # +0 h truth of the next, and without this each file is opened a dozen times from
 # a network filesystem. That is what makes a season look like it has hung.
 _TRUTH = {}
 _BT = {}
 _VMAX = {}
+_SID = {}
 
 
 def truth_centre(era5_dir, tc_id, valid, n):
@@ -155,19 +162,24 @@ def find_starts(root, version, mode, subdir=None):
     return out
 
 
-def storm_peak_vmax(track_csv, tc_id):
-    """Highest best-track wind over the storm's life, in the file's own units.
+def storm_sid(ibt_path, tc_id, init_str, run_dir):
+    """The IBTrACS storm this case is about, identified by where it started.
 
-    The paper selects storms this way - "all 2024 typhoons, i.e. with maximum
-    intensity (Vmax) greater than 65 kt" - and it is a property of the whole
-    track, not of the verifying time. 202408W peaked at 35 kt, so the paper
-    never verified it; this project did, and it is one of the largest errors in
-    the season.
+    Not by number. JMA numbers named storms and JTWC numbers every depression it
+    tracks, so the two run out of step during a season - 202405W is MARIA while
+    WP052024 is GAEMI - and a table built by mapping numbers looks plausible and
+    is nonsense. The frame centre at +0 h is the best-track position the ERA5 box
+    was cut around, so position and time identify exactly one storm.
     """
-    if tc_id not in _VMAX:
-        v = te.read_best_track(track_csv, tc_id, "vmax")
-        _VMAX[tc_id] = max(v.values()) if v else None
-    return _VMAX[tc_id]
+    if (ibt_path, tc_id) not in _SID:
+        when = datetime.datetime.strptime(init_str, "%Y%m%d%H")
+        try:
+            lon, lat, _n = forecast_centre(run_dir, 0, pf.read_meta(run_dir))
+        except (FileNotFoundError, OSError):
+            _SID[(ibt_path, tc_id)] = None
+            return None
+        _SID[(ibt_path, tc_id)] = ibt.match(ibt_path, tc_id, when, lon, lat)
+    return _SID[(ibt_path, tc_id)]
 
 
 def errors_for(run_dir, era5_dir, tc_id, init_str, bt=None, clip=None):
@@ -180,11 +192,12 @@ def errors_for(run_dir, era5_dir, tc_id, init_str, bt=None, clip=None):
 
     `clip` is the set of valid times that have a best-track record. Leads
     outside it are dropped even when ERA5 has a file, because ERA5 keeps a box
-    long after the agency stops: 202408W's best track ends 2024-08-15 18Z while
-    its ERA5 boxes run to 08-19 06Z, following a 1010.8 hPa remnant to 40N and
-    the dateline. Scoring a forecast against that measures how well the model
-    chases something that is no longer a tropical cyclone. Passing bt implies
-    the same clipping, since a lead with no record has no truth either.
+    long after the agency stops: 202408W's record ends 2024-08-15 18Z while its
+    ERA5 boxes run to 08-19 06Z, following a 1010.8 hPa remnant to 40N and the
+    dateline. Scoring against that measures how well the model chases something
+    that is no longer a tropical cyclone, and on the season statistics it hid a
+    20-28 % difference between the two models. Passing bt implies the same
+    clipping, since a lead with no record has no truth either.
     """
     init = datetime.datetime.strptime(init_str, "%Y%m%d%H")
     meta = pf.read_meta(run_dir)
@@ -209,20 +222,20 @@ def errors_for(run_dir, era5_dir, tc_id, init_str, bt=None, clip=None):
 
 
 def collect(root, era5_root, version, mode, limit=0, keep=None, subdir=None,
-            track_csv=None, jobs=1, use_bt=False, clip=False):
+            ibt_path=None, jobs=1, use_bt=False, clip=False):
     """Every case's error curve, keyed by lead, plus the per-case curves.
 
-    jobs > 1 spreads the cases over threads. This is worth doing because the
-    work is not computation: a two-run season measured 19 minutes of wall clock
-    against 27 seconds of CPU, so 97 % of it was the process blocked on a
-    network filesystem. Every one of those waits releases the GIL, so threads
-    overlap them; more of them in flight is the only thing that helps, and no
-    amount of faster arithmetic - or a GPU - touches it.
+    jobs > 1 spreads the cases over threads. The value of that depends entirely
+    on the filesystem cache: cold, a two-run season measured 19 minutes of wall
+    clock against 27 seconds of CPU, so 97 % of it was the process blocked on
+    the network filesystem and threads overlap those waits. Warm, the same run
+    takes 25 seconds and there is nothing left to overlap. No arithmetic
+    optimisation and no GPU touches either case.
 
-    Threads, not processes: the payload is a few floats per case, and the cost
-    of shipping it between processes would eat the gain. The module caches are
-    dicts read and written under the GIL, so the worst a race does is compute
-    the same answer twice and store it twice.
+    Threads, not processes: the payload is a few floats per case, and shipping
+    it between processes would eat the gain. The module caches are dicts read
+    and written under the GIL, so the worst a race does is compute the same
+    answer twice and store it twice.
 
     Results are merged in the original sorted order, so the output does not
     depend on which thread finished first.
@@ -240,15 +253,14 @@ def collect(root, era5_root, version, mode, limit=0, keep=None, subdir=None,
         era5 = os.path.join(os.path.expanduser(era5_root), tc, 'ERA5',
                             'for_DLAMPty')
         bt, times = None, None
-        if track_csv is not None and (use_bt or clip):
-            if tc not in _BT:
-                _BT[tc] = te.read_best_track(track_csv, tc, "position")
-            if not _BT[tc]:
-                return tc, init, path, None, f"{tc} (no best-track position)"
+        if ibt_path is not None and (use_bt or clip):
+            sid = storm_sid(ibt_path, tc, init, path)
+            if sid is None:
+                return tc, init, path, None, f"{tc} (no IBTrACS storm matched)"
             if use_bt:
-                bt = _BT[tc]
+                bt = ibt.positions(ibt_path, sid)
             if clip:
-                times = set(_BT[tc])
+                times = ibt.times(ibt_path, sid)
         if bt is None and not os.path.isdir(era5):
             return tc, init, path, None, f"{tc} (no ERA5 directory)"
         e = errors_for(path, era5, tc, init, bt, times)
@@ -272,60 +284,6 @@ def collect(root, era5_root, version, mode, limit=0, keep=None, subdir=None,
         for h, v in e.items():
             by_lead.setdefault(h, []).append(v)
     return by_lead, cases, skipped, per_case
-
-
-def head_to_head(all_cases, runs, args):
-    """Which cases the second run wins and loses, against the first.
-
-    A median says the polar model is 8 % behind; it cannot say whether that is
-    every case slightly behind or a handful catastrophically so, and those call
-    for different work. Ranking each case by the DIFFERENCE separates them, and
-    the two tails are the cases worth plotting: one shows what the geometry
-    buys, the other what it costs.
-
-    Ranked at a single lead, because a case can win at 24 h and lose at 120 and
-    a rank over all leads at once would average that away.
-    """
-    if len(runs) < 2:
-        return
-    base, other = runs[0][0], runs[1][0]
-    h = args.worst_at
-    rows = []
-    for key in set(all_cases[base]) & set(all_cases[other]):
-        a = all_cases[base][key].get(h)
-        b = all_cases[other][key].get(h)
-        if a is None or b is None:
-            continue
-        rows.append((b - a, a, b, key))
-    if not rows:
-        print("\nno case has both runs at +" + str(h) + " h")
-        return
-    rows.sort()
-    n = max(1, min(args.worst or 10, len(rows) // 2))
-    wins = sum(1 for r in rows if r[0] < 0)
-    print("\n===== " + other + " against " + base + " at +" + str(h) +
-          " h, " + str(len(rows)) + " cases =====")
-    print("  " + other + " is closer in " + str(wins) + " of " + str(len(rows)) +
-          " (" + format(100.0 * wins / len(rows), ".0f") + " %)")
-    for title, sel in (("BEST for " + other, rows[:n]),
-                       ("WORST for " + other, rows[-n:][::-1])):
-        print("\n  " + title)
-        print("  {:<10}{:<12}{:>12}{:>12}{:>10}".format(
-            "storm", "init", base[:11], other[:11], "diff"))
-        for d, a, b, (tc, init) in sel:
-            print("  {:<10}{:<12}{:>11.0f}k{:>11.0f}k{:>+9.0f}k".format(
-                tc, init, a, b, d))
-    if args.csv:
-        out = os.path.expanduser(args.csv)
-        os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
-        with open(out, "w", encoding="utf-8") as fh:
-            fh.write("run,tc,init,lead_h,error_km\n")
-            for name in all_cases:
-                for (tc, init), e in sorted(all_cases[name].items()):
-                    for lead in sorted(e):
-                        fh.write("{},{},{},{},{:.2f}\n".format(
-                            name, tc, init, lead, e[lead]))
-        print("\nwrote " + out)
 
 
 def report_worst(per_case, era5_root, n_worst, at_lead=None):
@@ -391,14 +349,15 @@ def main(args):
 
     runs = [parse_run(r, args.mode) for r in args.runs]
     use_bt = args.truth == "best"
-    wants_track = use_bt or args.clip_to_best_track or args.min_lifetime_vmax
-    if wants_track and not args.track_csv:
-        raise SystemExit("--truth best, --clip-to-best-track and "
-                         "--min-lifetime-vmax all need --track-csv")
-    track_csv = os.path.expanduser(args.track_csv) if args.track_csv else None
     clip = args.clip_to_best_track or use_bt
-    print("truth: " + ("best-track position" if use_bt else "ERA5 domain centre")
-          + ("; leads clipped to the best-track record" if clip else ""),
+    if (use_bt or clip) and not args.ibtracs:
+        raise SystemExit("--truth best and --clip-to-best-track need --ibtracs")
+    ibt_path = os.path.expanduser(args.ibtracs) if args.ibtracs else None
+    if ibt_path:
+        n = len(ibt.load(ibt_path))     # parse once, before any thread pool
+        print(f"IBTrACS: {n} storms from {ibt_path}", flush=True)
+    print("truth: " + ("IBTrACS position" if use_bt else "ERA5 domain centre")
+          + ("; leads clipped to the IBTrACS record" if clip else ""),
           flush=True)
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
 
@@ -414,24 +373,11 @@ def main(args):
         print(f"comparing on the {len(keep)} initial times every run has; "
               f"pass --unpaired to use each run's full set", flush=True)
 
-    # The storm filter belongs here, not inside collect: applied once, every run
-    # sees the same set and the count printed above stays the count used.
-    if args.min_lifetime_vmax and keep is not None:
-        peaks = {tc: storm_peak_vmax(track_csv, tc) for tc, _ in keep}
-        dropped = sorted(tc for tc, v in peaks.items()
-                         if v is None or v < args.min_lifetime_vmax)
-        keep = {(tc, i) for tc, i in keep
-                if peaks[tc] is not None and peaks[tc] >= args.min_lifetime_vmax}
-        print(f"  peak Vmax >= {args.min_lifetime_vmax:g}: kept "
-              f"{len(keep)} cases from {len({t for t, _ in keep})} storms; "
-              f"dropped {len(dropped)} storms " + ", ".join(dropped[:8])
-              + (" ..." if len(dropped) > 8 else ""), flush=True)
-
     all_cases = {}
     for name, root, mode, subdir in runs:
         by_lead, n_cases, skipped, per_case = collect(
             root, args.era5_root, args.version, mode, args.limit, keep,
-            subdir, track_csv, args.jobs, use_bt, clip)
+            subdir, ibt_path, args.jobs, use_bt, clip)
         seen = sorted({p.split(os.sep)[-2] for _, _, p, _ in per_case})
         print(f"  {name}: {n_cases} cases under {', '.join(seen) or '(none)'}",
               flush=True)
@@ -503,29 +449,24 @@ if __name__ == "__main__":
                         "modes; see parse_run")
     p.add_argument("--truth", default="era5", choices=["era5", "best"],
                    help="era5 takes the truth centre from the ERA5 domain's "
-                        "coordinates; best reads the best-track position, "
-                        "which is what the paper verifies against. The two "
-                        "differ by about 30 km, so this changes the numbers "
-                        "less than it changes what they can be quoted beside")
-    p.add_argument("--track-csv", default=None,
-                   help="directory of per-storm best-track CSVs; needed by "
-                        "--truth best, --clip-to-best-track and "
-                        "--min-lifetime-vmax")
+                        "coordinates; best reads the IBTrACS position, which "
+                        "is what the paper verifies against. The two differ by "
+                        "about 30 km, so this changes the numbers less than it "
+                        "changes what they can be quoted beside")
+    p.add_argument("--ibtracs", default=None, metavar="CSV",
+                   help="IBTrACS basin file, e.g. ibtracs.WP.list.v04r01.csv. "
+                        "This is the best-track source: the paper verifies "
+                        "against IBTrACS and states one sample per best-track "
+                        "record, so truncation and truth both come from here. "
+                        "Storms are matched by position and time, never by "
+                        "number - JMA numbers named storms and JTWC numbers "
+                        "every depression, so 202405W is MARIA while WP052024 "
+                        "is GAEMI")
     p.add_argument("--clip-to-best-track", action="store_true",
-                   help="score only leads that have a best-track record, the "
-                        "rule the paper states. ERA5 keeps a box long after the "
-                        "agency stops - 202408W's boxes run 3.5 days past its "
-                        "record, following a 1010 hPa remnant to 40N - and "
-                        "chasing that is not TC verification. Implied by "
-                        "--truth best; separate so the truncation can be "
-                        "measured without also changing the truth")
-    p.add_argument("--min-lifetime-vmax", type=float, default=0.0,
-                   help="drop storms whose best-track peak wind never reached "
-                        "this, in the CSV's units. The paper verifies 'all 2024 "
-                        "typhoons, i.e. with maximum intensity greater than 65 "
-                        "kt' - 26 storms. 202408W peaked at 35 kt and is one of "
-                        "the worst cases in this season, so the two samples are "
-                        "not comparable until this matches")
+                   help="score only leads with an IBTrACS record. Without it "
+                        "the ERA5 boxes carry the storm days past the last "
+                        "entry and those leads are graded like any other; that "
+                        "hid a 20-28 %% difference between the models")
     p.add_argument("--era5-root", required=True,
                    help="the directory holding {TC_ID}/ERA5/for_DLAMPty")
     p.add_argument("--version", default=None,
