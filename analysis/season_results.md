@@ -263,6 +263,17 @@ comparable to an all-cases mean. Stratifying is roadmap P3.
   number of named 2024 WNP storms. So the samples already match and
   `--min-lifetime-vmax 65` would cut this set to 15 and move it *away* from the
   paper's. Do not apply it.
+- **JMA and IBTrACS end their records within 0-18 h of each other**, so
+  clipping on JMA is equivalent to clipping on IBTrACS, which is what the paper
+  does. Checked by matching each JMA storm to the IBTrACS storm it overlaps
+  most; for the unambiguous matches - SHANSHAN, YAGI, JEBI, KRATHON, TRAMI,
+  KONG-REY, MAN-YI - the end differs by 0, +6 or +12 h, one or two 6-hourly
+  records out of about thirty. IBTrACS *starts* 12-48 h earlier because JTWC
+  numbers a depression before JMA names it, but that only changes which initial
+  times exist, not where a forecast's leads are cut.
+  Note the storm numbers are not interchangeable: JMA numbers named storms and
+  JTWC numbers every depression it tracks, so they diverge during the season
+  and `202405W` is not `WP052024`. Match on time overlap, never on the number.
 - Verification truth is JMA (`TC_list_JMA_v2`); the paper's is IBTrACS. For
   position this is not worth changing: the WMO position for the WNP comes from
   RSMC Tokyo, i.e. JMA, and the ERA5 box centres were measured at about 30 km
