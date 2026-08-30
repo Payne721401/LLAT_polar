@@ -246,7 +246,7 @@ def draw(acc, order, runs, leads, args):
 
     for i, var in enumerate(order):
         a = ax[i // ncol][i % ncol]
-        for (label, _), c in zip(runs, colours):
+        for (label, *_), c in zip(runs, colours):
             a.plot(leads, series(label, var, "rmse"), "-o", ms=3, color=c,
                    label=label)
             if args.show_bias:

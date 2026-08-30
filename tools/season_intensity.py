@@ -267,7 +267,7 @@ def draw(curves, runs, args):
 
     fig, ax = plt.subplots(2, 4, figsize=(19, 8.6), squeeze=False)
     colours = plt.rcParams['axes.prop_cycle'].by_key()['color']
-    for (label, _), c in zip(runs, colours * 4):
+    for (label, *_), c in zip(runs, colours * 4):
         rows = curves.get(label) or {}
         hs = sorted(h for h in rows if h % args.every == 0)
         if not hs:
