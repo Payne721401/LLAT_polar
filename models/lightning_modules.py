@@ -45,6 +45,7 @@ class PanguLightningModule(L.LightningModule):
         segmented_smooth: bool = False,
         segmented_smooth_boundary_width: Optional[int] = None,
         residual: bool = False,
+        residual_exclude_coords: bool = False,
         res_conn_after_smooth: bool = True,
     ):
         super().__init__()
@@ -71,6 +72,7 @@ class PanguLightningModule(L.LightningModule):
             segmented_smooth=segmented_smooth,
             segmented_smooth_boundary_width=segmented_smooth_boundary_width,
             residual=residual,
+            residual_exclude_coords=residual_exclude_coords,
             res_conn_after_smooth=res_conn_after_smooth,
         )
 

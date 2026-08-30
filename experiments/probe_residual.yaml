@@ -1,0 +1,49 @@
+# Probe 2 of 3: residual learning, with the coordinate channels left out of it.
+#
+#   sbatch --export=ALL,SAVE_TOP_K=3,FRESH=1,RUNDIR=runs/probe_residual,\
+#          OVERLAY=experiments/probe_residual.yaml job_scripts/train_h200.sh
+#
+# Identical to probe_base except the two lines at the bottom.
+#
+# ── Why residual at all ──────────────────────────────────────────────────
+# One step is three hours. Over three hours most of the atmosphere barely
+# moves, so predicting the change is an easier target than predicting the
+# state, and the identity map is a good prior. That is the usual argument and
+# it holds for every weather channel here.
+#
+# ── Why lon/lat must be excluded from it ─────────────────────────────────
+# It does not hold for the last two surface channels. Those are not weather:
+# they are the moving frame, and the next centre is the mean of the predicted
+# lon/lat field (Invariant 1). For them the identity map means "the storm did
+# not move" - so a residual connection hands the model a free, always-available
+# answer that is wrong in a specific direction, and this model already has a
+# measured slow bias. Making the easy answer be "stationary" is the last thing
+# it needs.
+#
+# residual_exclude_coords zeroes the residual for those two channels only. The
+# upper-air residual and the other eighteen surface channels are untouched, so
+# this probe tests the residual connection as a prior on weather without also
+# testing it as a prior on motion.
+
+seed_everything: 2
+
+trainer:
+  max_steps: 20000
+
+data:
+  data_spatial_shape: [13, 80, 360]
+  batch_size: 4
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  optimizer_args:
+    lr: 0.0004
+  lr_scheduler_name: constant_warmup
+  lr_scheduler_args:
+    warmup_steps: 250
+
+  residual: true
+  residual_exclude_coords: true

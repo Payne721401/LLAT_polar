@@ -1,0 +1,49 @@
+# Probe 1 of 3: the control. r80 geometry, constant LR after warmup.
+#
+#   sbatch --export=ALL,SAVE_TOP_K=3,FRESH=1,RUNDIR=runs/probe_base,\
+#          OVERLAY=experiments/probe_base.yaml job_scripts/train_h200.sh
+#
+# ── Why constant and not cosine ──────────────────────────────────────────
+# max_steps defines the cosine curve, so two cosine runs of different lengths
+# are at different points on their schedules at every step and cannot be
+# compared. constant_warmup makes max_steps a stopping rule and nothing else,
+# which is what a probe needs. The production run anneals; these do not.
+# Intended follow-up is WSD - warmup, stable, then decay over the last 10-20 %
+# - and these three runs are the "stable" phase measured on its own.
+#
+# ── Why 20,000 and not 4,000 ─────────────────────────────────────────────
+# r80 measured 105k steps in 7.5 h, so 14,000 steps/h: 4,000 steps is 17
+# minutes and 20,000 is 1.4 h. At 4,000 the run is barely out of warmup and
+# still learning the normalisation rather than the field, and a model with more
+# capacity looks worse there than it ends up being - which is exactly the
+# ordering these probes are meant to establish. The extra 70 minutes buys an
+# ordering that can be trusted.
+#
+# warmup drops 1000 -> 250. At 20,000 steps a 1000-step warmup is 5 % of the
+# run, which is fine; it was chosen down because the LR has to be flat for as
+# much of the comparison as possible.
+#
+# ── What must NOT differ between the three probes ────────────────────────
+# seed, warmup_steps, max_steps, lr, batch_size, precision. Only one thing may
+# change per probe or the result cannot be assigned.
+
+seed_everything: 2
+
+trainer:
+  max_steps: 20000
+
+data:
+  data_spatial_shape: [13, 80, 360]
+  batch_size: 4
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  residual: false
+  optimizer_args:
+    lr: 0.0004
+  lr_scheduler_name: constant_warmup
+  lr_scheduler_args:
+    warmup_steps: 250

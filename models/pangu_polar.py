@@ -40,6 +40,7 @@ class PanguPolarModel(nn.Module):
         segmented_smooth: bool = False,
         segmented_smooth_boundary_width: Optional[int] = None,
         residual: bool = False,
+        residual_exclude_coords: bool = False,
         res_conn_after_smooth: bool = True,
     ) -> None:
         """
@@ -95,6 +96,26 @@ class PanguPolarModel(nn.Module):
 
         self.residual = 1 if residual else 0
         self.res_conn_after_smooth = res_conn_after_smooth
+
+        # Keep the last two surface channels out of the residual. They are
+        # lon and lat - the moving frame, not weather (Invariant 1), and the
+        # next centre is the mean of the predicted lon/lat field. For every
+        # other channel the identity map is a good three-hour prior; for
+        # these two it means 'the storm did not move', so a residual
+        # connection hands the model a free answer that is wrong in one
+        # direction, and this model already runs slow.
+        #
+        # persistent=False so the mask never enters a state_dict: an older
+        # checkpoint still loads, and a checkpoint written now does not grow
+        # a key that an older build would reject.
+        if residual and residual_exclude_coords:
+            mask = torch.ones(surface_vars)
+            mask[-2:] = 0.0
+            # register_buffer refuses a name that already exists as a plain
+            # attribute, so the None goes in the other branch, not before.
+            self.register_buffer('res_surface_mask', mask, persistent=False)
+        else:
+            self.res_surface_mask = None
 
         self.patch_embed = PatchEmbedding(
             in_shape=data_spatial_shape,
@@ -174,6 +195,9 @@ class PanguPolarModel(nn.Module):
         with record_function("Res Save"):
             res_conn_upper = self.residual * input_upper
             res_conn_surface = self.residual * input_surface
+            if self.res_surface_mask is not None:
+                # (C,) broadcasts against (B, H, W, C)
+                res_conn_surface = res_conn_surface * self.res_surface_mask
 
         with record_function("Patch Embedding"):
             x = self.patch_embed(input_upper, input_surface)

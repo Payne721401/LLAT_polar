@@ -1,0 +1,59 @@
+# Probe 3 of 3: patch_r 4 -> 2, the finest radial patch this data supports.
+#
+#   sbatch --export=ALL,SAVE_TOP_K=3,FRESH=1,RUNDIR=runs/probe_patch226,\
+#          OVERLAY=experiments/probe_patch226.yaml job_scripts/train_h200.sh
+#
+# Identical to probe_base except patch_shape.
+#
+# ── What it changes ──────────────────────────────────────────────────────
+#   radial tokens   ceil(80/4) = 20  ->  ceil(80/2) = 40
+#   patch_r         0.50 deg         ->  0.25 deg
+#   total tokens    9,600            ->  19,200
+#
+# 0.25 deg is one ERA5 cell: the floor for this data, and the design the
+# roadmap's patch table listed and never ran. RMW is 0.3-0.5 deg, so this is
+# the first setting where a patch is smaller than the feature it has to
+# represent.
+#
+# ── What it costs ────────────────────────────────────────────────────────
+# Twice the tokens, so expect roughly twice the step time: about 2.9 h for
+# 20,000 steps against 1.4 h for the other two. Compare on both axes. At equal
+# steps the question is "does this architecture learn more per update"; at
+# equal wall clock it is "which should be trained", and the two can disagree.
+# The second is the one that decides anything.
+#
+# ── Divisibility, which is arithmetic and so can be checked now ──────────
+#   fine stage:   40 radial tokens, window_shape1 r = 10  ->  4 windows, exact
+#   after Down:   20 radial tokens, window_shape2 r =  5  ->  4 windows, exact
+#   azimuth:      60 tokens, 15 then 30                   ->  4 then 2, exact
+#   B8:           40 and 60 are both even, so DownSample's 2x2 pad is zero
+#
+# Verify before queuing - a shape error found in hour three is the expensive
+# way to learn this. In the training env (`ty`, which has timm; the inference
+# env on the lab host does not):
+#
+#   python -c "import torch; from models.pangu_polar import PanguModel; \
+#     m=PanguModel((13,80,360),6,20,[2,6],[6,12],192,(2,2,6),(2,10,15)); \
+#     u,s=m(torch.randn(1,13,80,360,6),torch.randn(1,80,360,20)); print(u.shape,s.shape)"
+
+seed_everything: 2
+
+trainer:
+  max_steps: 20000
+
+data:
+  data_spatial_shape: [13, 80, 360]
+  batch_size: 4
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  residual: false
+  optimizer_args:
+    lr: 0.0004
+  lr_scheduler_name: constant_warmup
+  lr_scheduler_args:
+    warmup_steps: 250
+
+  patch_shape: [2, 2, 6]
