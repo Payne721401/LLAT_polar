@@ -71,6 +71,25 @@ pf = ss.pf
 
 DEG_KM = 111.32
 
+KT = 0.514444          # knots to m/s
+
+# The paper's grouping (Fig. 8), on best-track Vmax at the forecast time, not at
+# the storm's peak: TD below 35 kt, TS in [35, 65), TY at or above 65. It
+# reports TD track errors about 30 % larger and a 1.5x wider spread, and
+# separately that LLAT.ty underpredicts intensity for TYs while being bias-free
+# for TDs and TSs. Neither statement can be checked against an all-cases mean.
+BINS = [(0.0, 35.0, "TD <35"), (35.0, 65.0, "TS 35-65"), (65.0, 1e9, "TY >=65")]
+
+
+def bin_of(vmax):
+    if vmax is None or not np.isfinite(vmax):
+        return None
+    for lo, hi, name in BINS:
+        if lo <= vmax < hi:
+            return name
+    return None
+
+
 
 def peak(field, search_deg):
     """Minimum MSLP in hPa and maximum 10 m wind within search_deg of centre.
@@ -106,10 +125,30 @@ def km(dlon, dlat, lat):
 
 
 def collect(run_dir, era5_dir, tc_id, init_str, args):
-    """Per-lead (dp, dw, track error) for one case, or {} if truth is missing."""
+    """Per-lead (dp, dw, track error, best-track Vmax) for one case.
+
+    The last field is what the sample is binned on and is never the model's own
+    intensity: the paper conditions on best-track Vmax at the forecast time, so
+    a bin has to mean the same thing for every run being compared.
+
+    With --truth best the pressure is compared against IBTrACS rather than
+    against ERA5's own minimum. That is not a cosmetic change. ERA5 cannot
+    resolve an eyewall at 0.25 degrees and is systematically too weak for
+    intense storms - it is the reason the paper reports a +40 hPa weak bias for
+    best-track MSLP below 950 - so "too deep against ERA5" and "too deep against
+    best track" are different claims, and only the second can be set beside the
+    paper's.
+
+    The wind comparison stays informational under --truth best: best-track Vmax
+    is a 1-minute sustained estimate and the model gives an instantaneous
+    0.25-degree cell maximum, which are not the same quantity.
+    """
     init = datetime.datetime.strptime(init_str, "%Y%m%d%H")
     meta = pf.read_meta(run_dir)
     clip = clip_times(args, tc_id, init_str, run_dir)
+    sid = (ss.storm_sid(args.ibtracs, tc_id, init_str, run_dir)
+           if args.ibtracs else None)
+    rec = ss.ibt.load(args.ibtracs)[sid]["rec"] if sid else {}
     out = {}
     for h in pf.available_leads(run_dir):
         if args.max_lead is not None and h > args.max_lead:
@@ -126,11 +165,43 @@ def collect(run_dir, era5_dir, tc_id, init_str, args):
         except (FileNotFoundError, OSError, KeyError):
             continue
         fp, fw = peak(f, args.search_deg)
-        tp, tw = peak(t, args.search_deg)
         flon, flat = float(np.nanmean(f.lon)), float(np.nanmean(f.lat))
         tlon, tlat = float(np.nanmean(t.lon)), float(np.nanmean(t.lat))
-        out[h] = (fp - tp, fw - tw, km(flon - tlon, flat - tlat, tlat))
+        b = rec.get(valid)
+        if args.truth == "best":
+            if not b or b["pres"] is None:
+                continue
+            tp = b["pres"]
+            tw = b["vmax"] * KT if b["vmax"] is not None else np.nan
+        else:
+            tp, tw = peak(t, args.search_deg)
+        out[h] = (fp - tp, fw - tw, km(flon - tlon, flat - tlat, tlat),
+                  b["vmax"] if b and b["vmax"] is not None else np.nan)
     return out
+
+
+def report_strat(rows, label, args):
+    """MSLP bias split by best-track Vmax at the forecast time."""
+    hs = sorted(h for h in rows if h % args.every == 0)
+    names = [n for _, _, n in BINS]
+    print()
+    print(f"----- {label}: MSLP bias by best-track intensity at the "
+          f"forecast time -----")
+    print(f"{'lead':>5}" + "".join(f"{n:>20}" for n in names))
+    print(f"{'':>5}" + "".join(f"{'n':>8}{'bias [hPa]':>12}" for _ in names))
+    print("-" * (5 + 20 * len(names)))
+    for h in hs:
+        a = np.array(rows[h], dtype=float)
+        line = f"{h:>5.0f}"
+        for _lo, _hi, n in BINS:
+            m = np.array([bin_of(v) == n for v in a[:, 3]])
+            if m.sum() < args.min_bin:
+                line += f"{m.sum():>8}{'-':>12}"
+            else:
+                line += f"{m.sum():>8}{np.nanmean(a[m, 0]):>12.1f}"
+        print(line)
+    print(f"  bins with fewer than {args.min_bin} samples are left blank; the "
+          f"paper's own\n  intensity claim is about the TY column alone.")
 
 
 def main(args):
@@ -170,6 +241,8 @@ def main(args):
                 print(f"    {label}: {i + 1}/{len(cases)}", flush=True)
 
         curves[label] = rows
+        if args.strat and rows:
+            report_strat(rows, label, args)
         print(f"\n===== {label} — {len(cases)} cases =====")
         print(f"{'lead':>5}{'n':>5}{'MSLP bias':>11}{'MSLP MAE':>10}"
               f"{'wind bias':>11}{'wind MAE':>10}"
@@ -330,6 +403,22 @@ if __name__ == "__main__":
     p.add_argument("--ibtracs", default=None, metavar="CSV",
                    help="IBTrACS basin file, for --clip-to-best-track. Storms "
                         "are matched by position and time, never by number")
+    p.add_argument("--truth", default="era5", choices=["era5", "best"],
+                   help="era5 compares the model's MSLP minimum with ERA5's "
+                        "own; best compares it with the IBTrACS central "
+                        "pressure, which is what the paper verifies against. "
+                        "ERA5 cannot resolve an eyewall at 0.25 deg and is too "
+                        "weak for intense storms - that is the source of the "
+                        "paper's +40 hPa - so the two answer different "
+                        "questions and only the second is comparable with it")
+    p.add_argument("--strat", action="store_true",
+                   help="split the MSLP bias by best-track Vmax at the "
+                        "forecast time, into the paper's TD / TS / TY groups. "
+                        "Its intensity claim is about the TY group alone and "
+                        "an all-cases mean cannot be set against it")
+    p.add_argument("--min-bin", type=int, default=10,
+                   help="a stratified cell with fewer samples than this prints "
+                        "blank rather than a number nobody should read")
     p.add_argument("--clip-to-best-track", action="store_true",
                    help="score only leads with an IBTrACS record. Without it "
                         "the ERA5 boxes carry the storm days past the last "
