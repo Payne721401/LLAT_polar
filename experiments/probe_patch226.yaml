@@ -32,9 +32,16 @@
 # way to learn this. In the training env (`ty`, which has timm; the inference
 # env on the lab host does not):
 #
-#   python -c "import torch; from models.pangu_polar import PanguModel; \
-#     m=PanguModel((13,80,360),6,20,[2,6],[6,12],192,(2,2,6),(2,10,15)); \
-#     u,s=m(torch.randn(1,13,80,360,6),torch.randn(1,80,360,20)); print(u.shape,s.shape)"
+#   python -c "
+#   import torch
+#   from models.pangu_polar import PanguPolarModel
+#   m = PanguPolarModel((13,80,360), 6, 20, [2,6], [6,12], 192,
+#                       (2,2,6), (2,10,15), (2,5,30))
+#   u, s = m(torch.randn(1,13,80,360,6), torch.randn(1,80,360,20))
+#   print(u.shape, s.shape)"
+#
+# The class is PanguPolarModel, not PanguModel, and window_size2 is a required
+# positional argument. Both cost a round trip the first time.
 
 seed_everything: 2
 
