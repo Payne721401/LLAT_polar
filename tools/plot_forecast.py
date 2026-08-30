@@ -30,6 +30,7 @@ Usage
 --run may be repeated to add columns. --era5 adds a truth column first.
 """
 import argparse
+import errno
 import datetime
 import os
 
@@ -158,7 +159,12 @@ def era5_path(era5_dir, tc_id, valid_time, must_exist=False):
     p = os.path.join(os.path.expanduser(era5_dir),
                      f"{tc_id}_{valid_time:%Y%m%d%H}_combined.nc")
     if must_exist and not os.path.exists(p):
-        raise FileNotFoundError(p)
+        # Built the way open() builds it, so the message reads "[Errno 2] No
+        # such file or directory: '...'". animate_forecast matches on that text
+        # to decide whether to redraw a frame without the ERA5 column, and a
+        # bare path broke the fallback: a storm whose record ends before the
+        # forecast does killed the whole animation instead of losing one column.
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), p)
     return p
 
 
