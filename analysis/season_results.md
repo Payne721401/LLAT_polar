@@ -227,25 +227,77 @@ is not the coordinate transform.
 
 ---
 
-## 3. Intensity, four runs
-
-Not yet run. Command:
+## 3. Intensity and fields, four runs, clipped to IBTrACS
 
 ```
-python tools/season_intensity.py --era5-root /wk2/yungyun/FCNV2_TC \
-  --runs "cart_1way=/wk2/yungyun/FCNV2_TC@one_way_couple_model" \
-  --runs "cart_2way=/wk2/yungyun/FCNV2_TC@2_way_circle_couple_model" \
-  --runs "polar_1way=/home/payne/LLAT_polar_runs_r80long_full@one-way" \
-  --runs "polar_2way=/home/payne/LLAT_polar_runs_r80long_2way@two-way" \
-  --max-lead 192 --every 24 \
-  --out analysis/figures/season_intensity_4way.png
+python tools/season_intensity.py --era5-root /wk2/yungyun/FCNV2_TC   --ibtracs /home/payne/ibtracs/ibtracs.WP.list.v04r01.csv --clip-to-best-track   --runs ... --max-lead 192 --every 24
+python tools/season_rmse.py   ... same flags ... --show-bias
 ```
 
-For reference, the one-way pair measured **-13.9 hPa** MSLP bias at +120 h
-against the Cartesian run's -2.7, surviving the under-200 km track filter at
--10.8 hPa (n = 23). The paper's own bias is **+40 hPa** — too weak — for
-best-track MSLP under 950 hPa, which is a conditional statistic and not
-comparable to an all-cases mean. Stratifying is roadmap P3.
+### Centre MSLP bias [hPa] — the over-deepening, confirmed and larger
+
+| lead | n | cart_1way | cart_2way | polar_1way | polar_2way |
+|-----:|--:|----------:|----------:|-----------:|-----------:|
+|  24h | 296 | -0.1 | -0.1 | -1.7 | -1.7 |
+|  48h | 263 | -1.0 | -1.1 | -3.4 | -3.5 |
+|  72h | 222 | -1.9 | -2.1 | -6.6 | -6.7 |
+|  96h | 177 | -2.9 | -3.1 | -9.9 | -10.3 |
+| 120h | 131 | **-4.0** | -4.2 | **-14.6** | -14.5 |
+| 144h |  92 | -4.7 | -4.7 | -17.0 | -16.3 |
+| 168h |  61 | -5.8 | -3.9 | -18.6 | -17.9 |
+| 192h |  35 | -5.2 | -4.5 | **-19.7** | **-20.7** |
+
+Monotonic, and **3.6x the Cartesian bias at +120 h**. It survives the track
+filter: over the 21 cases with a track error under 200 km at +120 h the polar
+bias is still **-11.3 hPa**, so it is an intensity error rather than a
+consequence of being in the wrong place.
+
+The wind bias runs the same way — polar_1way is **+3.8 m/s** at +120 h against
+the Cartesian +0.4. Too deep *and* too strong, which is a coherent
+over-intensification rather than a broken pressure-wind relation.
+
+### Two-way leaves the centre alone and wrecks the field
+
+Centre MSLP bias barely moves with the feedback on (polar -14.6 against -14.5 at
++120 h). The domain-mean field is a different story — msl bias [Pa]:
+
+| lead | cart_1way | cart_2way | polar_1way | polar_2way |
+|-----:|----------:|----------:|-----------:|-----------:|
+|  96h | -60 | -68 | -131 | -156 |
+| 120h | -93 | -107 | -247 | -293 |
+| 168h | -132 | -109 | -424 | **-603** |
+| 192h | -116 | -113 | **-465** | **-793** |
+
+So the two-way harm reported in section 1b is a **track and field** effect, not
+a centre-intensity one. The whole domain sinks; the eye does not sink further.
+
+### The hydrostatic drift, intact and amplified
+
+Bias at +192 h:
+
+| | cart_1way | polar_1way | polar_2way |
+|---|--:|--:|--:|
+| t850 [K] | -1.53 | -2.56 | **-2.77** |
+| z500 [m²/s²] | -328 | -835 | **-1085** |
+| msl [Pa] | -116 | -465 | **-793** |
+
+The column cools, the thickness drops, the height falls, the surface pressure
+falls. One drift, three symptoms, and the feedback makes each worse.
+
+### Where the polar model is better
+
+`q700` from +72 h on (0.002062 against 0.002126 at +72 h, 0.003005 against
+0.003097 at +192 h) and `t2m` at long lead (5.40 against 5.89 at +168 h, 6.13
+against 6.91 at +192 h). Mid-level moisture and near-surface temperature are
+the two fields the extra inner-core resolution buys.
+
+### What this says about P1
+
+Weighted MSE instead of unweighted L1 is the specific available explanation:
+L1 is indifferent to a uniform offset of the whole field, and pushing the domain
+down 465 Pa to sharpen the core is cheap under it and expensive under MSE. The
+acceptance test is the MSLP bias at +120 h, not the validation loss — the two
+losses are not comparable.
 
 ---
 
