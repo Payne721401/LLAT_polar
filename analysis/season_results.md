@@ -227,77 +227,97 @@ is not the coordinate transform.
 
 ---
 
-## 3. Intensity and fields, four runs, clipped to IBTrACS
+## 3. Intensity, against best track, split by intensity group
 
 ```
-python tools/season_intensity.py --era5-root /wk2/yungyun/FCNV2_TC   --ibtracs /home/payne/ibtracs/ibtracs.WP.list.v04r01.csv --clip-to-best-track   --runs ... --max-lead 192 --every 24
-python tools/season_rmse.py   ... same flags ... --show-bias
+python tools/season_intensity.py --era5-root /wk2/yungyun/FCNV2_TC   --ibtracs /home/payne/ibtracs/ibtracs.WP.list.v04r01.csv   --clip-to-best-track --truth best --strat --max-lead 192 --every 24
 ```
 
-### Centre MSLP bias [hPa] — the over-deepening, confirmed and larger
+**Truth is the IBTrACS central pressure**, not ERA5's own minimum. The two are
+not interchangeable: ERA5 cannot resolve an eyewall at 0.25 degrees and is
+systematically too weak for intense storms, which is the source of the paper's
++40 hPa. Positive bias means the forecast is **too weak**.
 
-| lead | n | cart_1way | cart_2way | polar_1way | polar_2way |
-|-----:|--:|----------:|----------:|-----------:|-----------:|
-|  24h | 296 | -0.1 | -0.1 | -1.7 | -1.7 |
-|  48h | 263 | -1.0 | -1.1 | -3.4 | -3.5 |
-|  72h | 222 | -1.9 | -2.1 | -6.6 | -6.7 |
-|  96h | 177 | -2.9 | -3.1 | -9.9 | -10.3 |
-| 120h | 131 | **-4.0** | -4.2 | **-14.6** | -14.5 |
-| 144h |  92 | -4.7 | -4.7 | -17.0 | -16.3 |
-| 168h |  61 | -5.8 | -3.9 | -18.6 | -17.9 |
-| 192h |  35 | -5.2 | -4.5 | **-19.7** | **-20.7** |
+MSLP bias [hPa], by best-track Vmax **at the forecast time**:
 
-Monotonic, and **3.6x the Cartesian bias at +120 h**. It survives the track
-filter: over the 21 cases with a track error under 200 km at +120 h the polar
-bias is still **-11.3 hPa**, so it is an intensity error rather than a
-consequence of being in the wrong place.
+| lead | | TD <35 | | TS 35-65 | | TY >=65 | |
+|-----:|---|---:|---:|---:|---:|---:|---:|
+| | | cart_1way | polar_1way | cart_1way | polar_1way | cart_1way | polar_1way |
+|   0h | n 82/130/90 | +2.3 | +2.3 | +5.1 | +5.1 | +24.4 | +24.4 |
+|  24h | | +1.8 | +1.5 | +4.7 | +3.4 | +24.5 | **+20.8** |
+|  48h | | 0.0 | -1.3 | +1.6 | -0.6 | +25.0 | **+20.6** |
+|  72h | | -1.9 | -7.0 | -1.3 | -6.1 | +25.8 | **+19.3** |
+|  96h | | -4.4 | -12.9 | -2.0 | -9.5 | +24.1 | **+16.0** |
+| 120h | n 22/28/34 | -6.5 | -19.2 | -3.9 | -13.5 | +23.9 | **+13.8** |
 
-The wind bias runs the same way — polar_1way is **+3.8 m/s** at +120 h against
-the Cartesian +0.4. Too deep *and* too strong, which is a coherent
-over-intensification rather than a broken pressure-wind relation.
+At +0 h all four runs and all three groups agree — that is the initial
+condition, and it is already 24 hPa too weak for typhoons. Everything below it
+is the model's doing.
 
-### Two-way leaves the centre alone and wrecks the field
+### It is one near-uniform offset, not an intensity-dependent error
 
-Centre MSLP bias barely moves with the feedback on (polar -14.6 against -14.5 at
-+120 h). The domain-mean field is a different story — msl bias [Pa]:
+polar_1way minus cart_1way at +120 h:
 
-| lead | cart_1way | cart_2way | polar_1way | polar_2way |
-|-----:|----------:|----------:|-----------:|-----------:|
-|  96h | -60 | -68 | -131 | -156 |
-| 120h | -93 | -107 | -247 | -293 |
-| 168h | -132 | -109 | -424 | **-603** |
-| 192h | -116 | -113 | **-465** | **-793** |
+| group | difference |
+|---|---:|
+| TD | -12.7 hPa |
+| TS | -9.6 hPa |
+| TY | -10.1 hPa |
 
-So the two-way harm reported in section 1b is a **track and field** effect, not
-a centre-intensity one. The whole domain sinks; the eye does not sink further.
+**The polar centre is about 11 hPa deeper than the Cartesian one at the same
+lead, whatever the storm's strength.** For typhoons that closes 42 % of a weak
+bias the paper attributes to unresolved eyewalls; for weak systems it pushes a
+near-zero bias to -19. One offset, two opposite consequences.
 
-### The hydrostatic drift, intact and amplified
+**The earlier claim that this project reversed the paper's intensity bias is
+withdrawn.** The TY column is still positive — still too weak, the same sign the
+paper reports. What the polar formulation does is *reduce* that bias, which is
+a smaller claim and a defensible one, and it connects directly to the cause the
+paper names.
 
-Bias at +192 h:
+**An all-cases mean is not usable here.** Averaging a +13.8 against a -19.2
+gives -14.6, which describes neither group; every earlier figure quoted in that
+form should be read as this table instead.
 
-| | cart_1way | polar_1way | polar_2way |
-|---|--:|--:|--:|
-| t850 [K] | -1.53 | -2.56 | **-2.77** |
-| z500 [m²/s²] | -328 | -835 | **-1085** |
-| msl [Pa] | -116 | -465 | **-793** |
+### Two-way barely touches the centre
 
-The column cools, the thickness drops, the height falls, the surface pressure
-falls. One drift, three symptoms, and the feedback makes each worse.
+polar_2way against polar_1way at +120 h: TD -18.7 against -19.2, TS -14.5
+against -13.5, TY +17.3 against +13.8. The feedback's harm, established in
+section 1b, is in the **track and the domain-mean field**, not in the eye.
 
-### Where the polar model is better
+---
 
-`q700` from +72 h on (0.002062 against 0.002126 at +72 h, 0.003005 against
-0.003097 at +192 h) and `t2m` at long lead (5.40 against 5.89 at +168 h, 6.13
-against 6.91 at +192 h). Mid-level moisture and near-surface temperature are
-the two fields the extra inner-core resolution buys.
+## 3b. Vortex asymmetry — the proposed mechanism, refuted
 
-### What this says about P1
+```
+python tools/season_asymmetry.py --era5-root /wk2/yungyun/FCNV2_TC   --ibtracs ... --clip-to-best-track --max-lead 192 --every 24
+```
 
-Weighted MSE instead of unweighted L1 is the specific available explanation:
-L1 is indifferent to a uniform offset of the whole field, and pushing the domain
-down 465 Pa to sharpen the core is cheap under it and expensive under MSE. The
-acceptance test is the MSLP bias at +120 h, not the validation loss — the two
-losses are not comparable.
+Azimuthal wavenumber-1 amplitude of msl on a ring, as a fraction of ERA5's at
+the same case and lead. Below 1 is too axisymmetric.
+
+| r | run | 48h | 96h | 120h | 192h |
+|--:|---|---:|---:|---:|---:|
+| 2 deg | cart_1way | 1.03 | 1.22 | 1.11 | 1.34 |
+| 2 deg | polar_1way | 1.05 | 1.16 | **1.42** | **1.57** |
+| 8 deg | cart_1way | 0.98 | 0.94 | 1.09 | 1.20 |
+| 8 deg | polar_1way | 0.95 | 0.91 | 0.97 | 1.20 |
+| 8 deg | polar_2way | 0.93 | 0.94 | 0.96 | 1.15 |
+
+**The polar vortex is not too round.** In the core it is *more* asymmetric than
+the truth, increasingly so with lead — consistent with a deeper core, which has
+larger gradients for any distortion to act on. At 8 degrees it is 3-6 % below
+ERA5 between 48 and 120 h, and the Cartesian run is 2-6 % below over the same
+span: a difference far too small to produce a 20-28 % track deficit.
+
+**And two-way does not reduce it.** polar_2way tracks polar_1way to within a few
+percent at every radius and lead. The hypothesis that the feedback injects an
+over-axisymmetric vortex into FCNV2 and corrupts the steering **does not
+survive**; the two-way harm is still unexplained.
+
+The single-case figure this project carried — an azimuthal standard deviation
+one fifth of ERA5's, from 202421W at +96 h — **does not generalise** and should
+not be quoted.
 
 ---
 
