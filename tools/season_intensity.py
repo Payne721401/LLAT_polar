@@ -204,6 +204,68 @@ def report_strat(rows, label, args):
           f"paper's own\n  intensity claim is about the TY column alone.")
 
 
+def draw_strat(curves, runs, args):
+    """One panel per best-track intensity group, MSLP bias against lead.
+
+    This is the figure the result lives in, and it is deliberately plainer than
+    the eight-panel overview: four runs with a median, a mean and a shaded
+    interquartile range is twelve overlapping things per panel, and the reader
+    cannot see which line is above which. Here it is one line per run, a zero
+    line, and the sample count in the label - because the whole claim is about
+    which side of zero each group sits on and by how much.
+
+    Positive is too weak, which is the sign convention the paper reports its
+    +40 hPa in. Splitting matters because the groups disagree: averaged
+    together, a strongly positive TY column and a strongly negative TD column
+    make a mean that describes neither.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    names = [n for _, _, n in BINS]
+    fig, axes = plt.subplots(1, len(names), figsize=(5.2 * len(names), 4.4),
+                             sharex=True)
+    colours = plt.rcParams['axes.prop_cycle'].by_key()['color']
+
+    for ax, (lo, hi, name) in zip(axes, BINS):
+        for (label, *_), c in zip(runs, colours * 4):
+            rows = curves[label]
+            hs = sorted(h for h in rows if h % args.every == 0)
+            xs, ys, ns = [], [], []
+            for h in hs:
+                a = np.array(rows[h], dtype=float)
+                m = np.array([bin_of(v) == name for v in a[:, 3]])
+                if m.sum() < args.min_bin:
+                    continue
+                xs.append(h)
+                ys.append(float(np.nanmean(a[m, 0])))
+                ns.append(int(m.sum()))
+            if xs:
+                ax.plot(xs, ys, 'o-', ms=4, lw=1.8, color=c,
+                        label=f"{label} (n {ns[0]}→{ns[-1]})")
+        ax.axhline(0, color='0.3', lw=1)
+        ax.set_title(f"{name} kt", fontsize=11)
+        ax.set_xlabel("forecast hour")
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=8)
+    axes[0].set_ylabel("MSLP bias [hPa]   positive = too weak")
+
+    fig.suptitle("MSLP bias against best track, split by best-track Vmax at the "
+                 "forecast time\n"
+                 "the groups disagree in sign, so an all-cases mean describes "
+                 "neither", fontsize=11)
+    fig.tight_layout()
+    out = os.path.expanduser(args.strat_out or os.path.join(
+        "analysis", "figures", "season",
+        "intensity_strat_" + "_".join(l.replace('/', '-') for l, *_ in runs)
+        + ".png"))
+    os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+    fig.savefig(out, dpi=args.dpi if hasattr(args, "dpi") else 150,
+                bbox_inches='tight')
+    print("\nwrote " + out)
+
+
 def main(args):
     curves = {}
     era5_root = os.path.expanduser(args.era5_root)
@@ -294,6 +356,8 @@ def main(args):
                       f"this lead.")
 
     draw(curves, runs, args)
+    if args.strat:
+        draw_strat(curves, runs, args)
 
 
 def draw(curves, runs, args):
@@ -416,6 +480,9 @@ if __name__ == "__main__":
                         "forecast time, into the paper's TD / TS / TY groups. "
                         "Its intensity claim is about the TY group alone and "
                         "an all-cases mean cannot be set against it")
+    p.add_argument("--strat-out", default=None,
+                   help="figure path for the stratified panels; defaults to "
+                        "analysis/figures/season/intensity_strat_<labels>.png")
     p.add_argument("--min-bin", type=int, default=10,
                    help="a stratified cell with fewer samples than this prints "
                         "blank rather than a number nobody should read")
