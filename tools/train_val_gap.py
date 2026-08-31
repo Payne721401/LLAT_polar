@@ -292,11 +292,15 @@ def report(run_dir, args):
         v_early = sum(r[2] for r in tail[:half]) / half
         v_late = sum(r[2] for r in tail[half:]) / (len(tail) - half)
         drift = 100.0 * (v_late - v_early) / v_early
+        t_early = sum(r[1] for r in tail[:half]) / half
+        t_late = sum(r[1] for r in tail[half:]) / (len(tail) - half)
+        t_drift = 100.0 * (t_late - t_early) / t_early
 
         span = 100 * (1 - args.converged)
         print(f"\n  over the last {span:.0f}% of training")
         print(f"    gap        {g_early:>8.1f}% -> {g_late:>8.1f}%")
         print(f"    validation {v_early:>9.5f} -> {v_late:>9.5f}  ({drift:+.2f}%)")
+        print(f"    training   {t_early:>9.5f} -> {t_late:>9.5f}  ({t_drift:+.2f}%)")
         print("  ", end="")
 
         # VALIDATION DECIDES, not the gap. A second wrong verdict came from
@@ -308,7 +312,31 @@ def report(run_dir, args):
         #
         # Overfitting is validation getting worse. The gap only qualifies the
         # answer once validation has stopped improving.
-        if drift < -0.1:
+        # DIVERGENCE FIRST, because every branch below assumes the model is
+        # still fitting the training set and reads validation to ask how well
+        # that generalises. When TRAINING loss is also rising, the optimiser is
+        # coming apart and none of those questions apply: it is not a
+        # generalisation result at any lead.
+        #
+        # This mattered. A round of probes at lr 4e-4 with bf16 - the
+        # combination the 2026-08-04 report had already shown blows the
+        # downsample LayerNorm gradients up, 66 % of steps clipped - had every
+        # run's training loss rise by 40 to 160 % after step 4,500, and this
+        # tool called one of them STILL IMPROVING and the other two
+        # OVERFITTING. All three verdicts were wrong, and the runs measured
+        # the learning rate rather than the architectures they were built to
+        # compare.
+        if t_drift > 5.0:
+            print("DIVERGING: the TRAINING loss is rising too. This is not")
+            print("  overfitting - overfitting is training down, validation up.")
+            print("  The optimiser is coming apart, so nothing here is a result")
+            print("  about the architecture. Usual causes, in order: the")
+            print("  learning rate is too high for the precision (bf16 has an")
+            print("  8-bit mantissa and the smallest gradients in this network")
+            print("  are the LayerNorms either side of DownSample), a schedule")
+            print("  that never decays, or a bad resume. Check the gradient")
+            print("  norm and the clip rate before changing anything else.")
+        elif drift < -0.1:
             print("STILL IMPROVING: validation is falling. Not overfitting,")
             print("  whatever the gap does - a widening gap here just means the")
             print("  training set improves faster, which is what fitting looks")

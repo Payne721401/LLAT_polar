@@ -51,7 +51,16 @@ model:
   window_shape2: [2, 5, 30]
   residual: false
   optimizer_args:
-    lr: 0.0004
+    # 5e-5, not the 4e-4 in config.yaml. That value is a leftover: every
+    # production overlay here overrides it, and the 2026-08-04 report closed
+    # the case on why. bf16 carries an 8-bit mantissa, the downsample
+    # LayerNorm gradients are the smallest in the network and so the most
+    # sensitive to relative error, and at 4e-4 they blow up: gradient norm
+    # 147 and 66 % of steps clipped, against 0.28 and 0 % at 5e-5. The first
+    # round of these probes was run at 4e-4 and all three diverged - training
+    # loss rising, not just validation - so they measured the learning rate
+    # and nothing about the architecture.
+    lr: 0.00005
   lr_scheduler_name: constant_warmup
   lr_scheduler_args:
     warmup_steps: 1000
