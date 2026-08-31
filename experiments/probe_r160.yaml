@@ -1,0 +1,59 @@
+# Probe 4 of 4: R 160 with patch_r 2. The finest radial patch attempted.
+#
+#   sbatch --export=ALL,SAVE_TOP_K=3,FRESH=1,RUNDIR=runs/probe_r160,\
+#          OVERLAY=experiments/probe_r160.yaml job_scripts/train_h200.sh
+#
+# ── Geometry, checked ────────────────────────────────────────────────────
+#   dr              10/159 = 0.0629 deg
+#   radial tokens   ceil(160/2) = 80
+#   patch extent    2 x 0.0629 = 0.126 deg - half an ERA5 cell
+#   fine windows    80 / 10 = 8, exact
+#   after Down      40 /  5 = 8, exact
+#   azimuth         60 tokens, 15 then 30 -> 4 then 2, exact
+#   B8              80 and 60 are both even, so DownSample's pad is zero
+#   total tokens    8 x 80 x 60 = 38,400
+#
+# ── What it costs ────────────────────────────────────────────────────────
+# Four times probe_base's tokens and twice probe_patch226's, so expect roughly
+# 5.7 h for 20,000 steps against base's 1.4 h. The CPU-side polar resampling
+# also doubles, turning a 161x161 crop into (160, 360). GPU idle was measured
+# at 3 % on this model, so there is little slack: if the step time is worse
+# than the 4x the token count predicts, the dataloader has become the
+# bottleneck, and that is worth knowing on its own. Check utilisation rather
+# than assuming.
+#
+# ── What it isolates, and what it does not ───────────────────────────────
+# Against probe_patch226 this is one variable: the patch halves again,
+# 0.253 -> 0.126 deg, with the number of samples inside each patch held at two.
+# Against probe_base it is two variables at once - four times the tokens and a
+# quarter of the patch - so the base comparison bounds the total gain and the
+# p226 comparison is the one that attributes it.
+#
+# Every sample below 0.25 deg is interpolated. config.yaml line 87 records that
+# R = 41 is where dr equals ERA5's grid, so this is 4x upsampled and a patch
+# now spans less than one cell of the source data. If a finer patch keeps
+# helping here, it is not because the data got finer; it would mean the patch
+# embedding was still the binding constraint at 0.25 deg, which the roadmap's
+# patch table called the floor.
+
+seed_everything: 2
+
+trainer:
+  max_steps: 20000
+
+data:
+  data_spatial_shape: [13, 160, 360]
+  batch_size: 4
+
+model:
+  data_spatial_shape: [13, 160, 360]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  residual: false
+  optimizer_args:
+    lr: 0.0004
+  lr_scheduler_name: constant_warmup
+  lr_scheduler_args:
+    warmup_steps: 1000
+
+  patch_shape: [2, 2, 6]

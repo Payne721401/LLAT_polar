@@ -1,4 +1,4 @@
-# Probe 2 of 3: residual learning, with the coordinate channels left out of it.
+# Probe 2 of 4: residual learning, with the coordinate channels left out of it.
 #
 #   sbatch --export=ALL,SAVE_TOP_K=3,FRESH=1,RUNDIR=runs/probe_residual,\
 #          OVERLAY=experiments/probe_residual.yaml job_scripts/train_h200.sh
@@ -43,7 +43,7 @@ model:
     lr: 0.0004
   lr_scheduler_name: constant_warmup
   lr_scheduler_args:
-    warmup_steps: 250
+    warmup_steps: 1000
 
   residual: true
   residual_exclude_coords: true

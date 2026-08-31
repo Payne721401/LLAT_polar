@@ -1,4 +1,4 @@
-# Probe 3 of 3: patch_r 4 -> 2, the finest radial patch this data supports.
+# Probe 3 of 4: patch_r 4 -> 2, the finest radial patch this data supports.
 #
 #   sbatch --export=ALL,SAVE_TOP_K=3,FRESH=1,RUNDIR=runs/probe_patch226,\
 #          OVERLAY=experiments/probe_patch226.yaml job_scripts/train_h200.sh
@@ -61,6 +61,6 @@ model:
     lr: 0.0004
   lr_scheduler_name: constant_warmup
   lr_scheduler_args:
-    warmup_steps: 250
+    warmup_steps: 1000
 
   patch_shape: [2, 2, 6]

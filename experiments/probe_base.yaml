@@ -1,4 +1,4 @@
-# Probe 1 of 3: the control. r80 geometry, constant LR after warmup.
+# Probe 1 of 4: the control. r80 geometry, constant LR after warmup.
 #
 #   sbatch --export=ALL,SAVE_TOP_K=3,FRESH=1,RUNDIR=runs/probe_base,\
 #          OVERLAY=experiments/probe_base.yaml job_scripts/train_h200.sh
@@ -19,11 +19,12 @@
 # ordering these probes are meant to establish. The extra 70 minutes buys an
 # ordering that can be trusted.
 #
-# warmup drops 1000 -> 250. At 20,000 steps a 1000-step warmup is 5 % of the
-# run, which is fine; it was chosen down because the LR has to be flat for as
-# much of the comparison as possible.
+# warmup stays at 1000, matching config.yaml. At 20,000 steps that is 5 % of
+# the run, and keeping it identical to the production setting means a probe
+# that turns out worth extending can simply be resumed - a run whose warmup
+# differed from the long run it grew into would not be comparable with it.
 #
-# ── What must NOT differ between the three probes ────────────────────────
+# ── What must NOT differ between the four probes ─────────────────────────
 # seed, warmup_steps, max_steps, lr, batch_size, precision. Only one thing may
 # change per probe or the result cannot be assigned.
 
@@ -46,4 +47,4 @@ model:
     lr: 0.0004
   lr_scheduler_name: constant_warmup
   lr_scheduler_args:
-    warmup_steps: 250
+    warmup_steps: 1000
