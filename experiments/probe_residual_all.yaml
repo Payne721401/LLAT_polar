@@ -1,0 +1,56 @@
+# Residual, with every channel whose identity map is wrong left out of it.
+#
+#   sbatch --export=ALL,SAVE_TOP_K=3,FRESH=1,RUNDIR=runs/probe_residual_all,\
+#          OVERLAY=experiments/probe_residual_all.yaml job_scripts/train_h200.sh
+#
+# ── Why the first residual probe did not test the residual ───────────────
+# probe_residual excluded only lon and lat and came out 1.02 % behind base.
+# That was not a clean test. Eight other surface channels are functions of
+# where and when the domain is, not of the atmosphere, and for every one of
+# them the identity map is wrong by a known amount at every step:
+#
+#   f              2*Omega*sin(lat). Identity means the latitude did not change,
+#                  which is the same error as lon/lat wearing a different name.
+#   hgt, landmask  the terrain under a moving frame. Identity means the storm
+#                  did not move over new ground.
+#   solar          a function of time and position; three hours is a lot of it.
+#   diurnal_sin,   the clearest case of all: one step is 45 degrees of phase.
+#   diurnal_cos    Identity is wrong by a large, deterministic amount, every
+#                  step, forever.
+#
+# So the first probe handed the model an identity prior on eight channels where
+# identity is a guaranteed error, and the 1.02 % it lost cannot be attributed
+# to the residual connection itself.
+#
+# ── What stays in ────────────────────────────────────────────────────────
+# The seven prognostic fields, tp, mtnlwrf, sst_filled - and doy_sin/doy_cos,
+# where identity is not just acceptable but nearly exact: three hours is 0.34
+# degrees of a yearly cycle.
+#
+# The loss is untouched here. probe_lossexcl changes that instead, so the two
+# effects stay separable and probe_base is the control for both.
+
+seed_everything: 2
+
+trainer:
+  max_steps: 20000
+
+data:
+  data_spatial_shape: [13, 80, 360]
+  batch_size: 4
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  optimizer_args:
+    lr: 0.00005
+  lr_scheduler_name: constant_warmup
+  lr_scheduler_args:
+    warmup_steps: 1000
+
+  residual: true
+  residual_exclude:
+    [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos,
+     lon, lat]

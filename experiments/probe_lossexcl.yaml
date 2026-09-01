@@ -1,0 +1,63 @@
+# Stop scoring the model on eight channels whose predictions are thrown away.
+#
+#   sbatch --export=ALL,SAVE_TOP_K=3,FRESH=1,RUNDIR=runs/probe_lossexcl,\
+#          OVERLAY=experiments/probe_lossexcl.yaml job_scripts/train_h200.sh
+#
+# ── What is actually happening at inference ──────────────────────────────
+# run_coupled_forecast.py calls changing_additional_information at every step.
+# It recomputes landmask, hgt, f, solar and the four temporal encodings from
+# the new centre and the new timestamp, and OVERWRITES the model's own values
+# for them. Those eight predictions never reach the forecast, and never reach
+# the next step's input either. They are computed and discarded.
+#
+# The paper describes the same design - "SW, HGT, Landmask, and the temporal
+# encoding variables are also prescribed based on the updated TC-centered
+# domain information" - so the overwrite is correct. What it does not say is
+# whether they belong in the loss, and here they do: criterion is a plain
+# nn.L1Loss over the whole (B, R, Theta, 20) tensor, so eight of the eighteen
+# non-coordinate surface channels carry the same weight as msl. Forty-four
+# percent of the surface loss is spent on outputs that are thrown away.
+#
+# Note the Cartesian model does exactly the same thing, so this is inherited
+# rather than a polar regression, and the polar-against-Cartesian comparisons
+# are not distorted by it. Both differ from the paper here.
+#
+# ── f is a second question, deliberately not asked here ──────────────────
+# The paper excludes the Coriolis parameter from the model entirely: "tested
+# but are not included in the final configuration ... because these variables
+# can be derived from basic variables". This repo has it, in both the polar and
+# the Cartesian configuration. Dropping it from the loss is a smaller step than
+# dropping it from the channel list, and only the first is being taken now.
+#
+# ── The rescaling, which is the part that is easy to get wrong ───────────
+# Zeroing eight of twenty weights inside a mean divides the surface loss by
+# 20/12, so surface_weight 0.25 would quietly start behaving like 0.15 and the
+# run would differ from the control in two ways at once. The surviving weights
+# are scaled by 20/12 so the result stays a true mean over the channels that
+# remain. Verified against a direct mean over the kept channels.
+#
+# probe_base is the control: same everything, loss over all twenty channels.
+
+seed_everything: 2
+
+trainer:
+  max_steps: 20000
+
+data:
+  data_spatial_shape: [13, 80, 360]
+  batch_size: 4
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  residual: false
+  optimizer_args:
+    lr: 0.00005
+  lr_scheduler_name: constant_warmup
+  lr_scheduler_args:
+    warmup_steps: 1000
+
+  loss_exclude_channels:
+    [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos]

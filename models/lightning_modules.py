@@ -20,6 +20,23 @@ def destandardize(x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> tor
     return x*std + mean
 
 
+
+def _resolve(names, all_names, flag):
+    """Channel names -> indices, or None. Raises on a name that is not there.
+
+    Failing loud matters: a typo in a config list would otherwise silently
+    exclude nothing, and the run would look like the control while being
+    labelled as the experiment.
+    """
+    if not names:
+        return None
+    missing = [n for n in names if n not in all_names]
+    if missing:
+        raise ValueError(
+            f"{flag}: {missing} not in surface_vars {list(all_names)}")
+    return [all_names.index(n) for n in names]
+
+
 class PanguLightningModule(L.LightningModule):
     def __init__(
         self,
@@ -45,7 +62,8 @@ class PanguLightningModule(L.LightningModule):
         segmented_smooth: bool = False,
         segmented_smooth_boundary_width: Optional[int] = None,
         residual: bool = False,
-        residual_exclude_coords: bool = False,
+        residual_exclude: Optional[list[str]] = None,
+        loss_exclude_channels: Optional[list[str]] = None,
         res_conn_after_smooth: bool = True,
     ):
         super().__init__()
@@ -72,7 +90,8 @@ class PanguLightningModule(L.LightningModule):
             segmented_smooth=segmented_smooth,
             segmented_smooth_boundary_width=segmented_smooth_boundary_width,
             residual=residual,
-            residual_exclude_coords=residual_exclude_coords,
+            residual_exclude_idx=_resolve(residual_exclude, surface_vars,
+                                         'residual_exclude'),
             res_conn_after_smooth=res_conn_after_smooth,
         )
 
@@ -118,7 +137,17 @@ class PanguLightningModule(L.LightningModule):
                   f"wrapped; compilation happens on the first forward, so a "
                   f"failure appears there and not here")
 
-        if upper_var_weights is None and surface_var_weights is None:
+        # A channel excluded from the loss is a weight of zero, with the
+        # survivors scaled up by C / n_kept so the result stays a MEAN over the
+        # channels that remain. Without that rescaling, dropping 8 of 20
+        # channels would quietly multiply the surface loss by 12/20 and change
+        # what surface_weight means, so the control run and the excluded run
+        # would differ by two things at once.
+        loss_excl = _resolve(loss_exclude_channels, surface_vars,
+                             'loss_exclude_channels')
+
+        if upper_var_weights is None and surface_var_weights is None \
+                and not loss_excl:
             self.weighted_loss = False
             self.criterion = nn.L1Loss()
             upper_var_weights_tensor = None
@@ -134,6 +163,19 @@ class PanguLightningModule(L.LightningModule):
             if surface_var_weights is not None:
                 for i, var in enumerate(surface_vars):
                     surface_var_weights_tensor[i] = surface_var_weights.get(var, 1.0)
+            if loss_excl:
+                for i in loss_excl:
+                    surface_var_weights_tensor[i] = 0.0
+                kept = len(surface_vars) - len(loss_excl)
+                if kept <= 0:
+                    raise ValueError("loss_exclude_channels excludes every "
+                                     "surface channel")
+                surface_var_weights_tensor *= len(surface_vars) / kept
+                print(f"[loss] surface channels excluded: "
+                      f"{', '.join(surface_vars[i] for i in loss_excl)}  "
+                      f"({kept} of {len(surface_vars)} kept, weights scaled by "
+                      f"{len(surface_vars) / kept:.4f} so the loss stays a mean "
+                      f"over the survivors)")
 
         self.register_buffer("upper_var_weights", upper_var_weights_tensor)
         self.register_buffer("surface_var_weights", surface_var_weights_tensor)

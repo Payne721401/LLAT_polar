@@ -40,7 +40,7 @@ class PanguPolarModel(nn.Module):
         segmented_smooth: bool = False,
         segmented_smooth_boundary_width: Optional[int] = None,
         residual: bool = False,
-        residual_exclude_coords: bool = False,
+        residual_exclude_idx: Optional[Sequence[int]] = None,
         res_conn_after_smooth: bool = True,
     ) -> None:
         """
@@ -108,9 +108,10 @@ class PanguPolarModel(nn.Module):
         # persistent=False so the mask never enters a state_dict: an older
         # checkpoint still loads, and a checkpoint written now does not grow
         # a key that an older build would reject.
-        if residual and residual_exclude_coords:
+        if residual and residual_exclude_idx:
             mask = torch.ones(surface_vars)
-            mask[-2:] = 0.0
+            for i in residual_exclude_idx:
+                mask[i] = 0.0
             # register_buffer refuses a name that already exists as a plain
             # attribute, so the None goes in the other branch, not before.
             self.register_buffer('res_surface_mask', mask, persistent=False)

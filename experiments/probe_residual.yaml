@@ -20,7 +20,7 @@
 # measured slow bias. Making the easy answer be "stationary" is the last thing
 # it needs.
 #
-# residual_exclude_coords zeroes the residual for those two channels only. The
+# residual_exclude zeroes the residual for the channels it names. The
 # upper-air residual and the other eighteen surface channels are untouched, so
 # this probe tests the residual connection as a prior on weather without also
 # testing it as a prior on motion.
@@ -55,4 +55,8 @@ model:
     warmup_steps: 1000
 
   residual: true
-  residual_exclude_coords: true
+  # As run. Only the two coordinate channels; probe_residual_all excludes
+  # the eight prescribed ones as well, which is what makes that a test of
+  # the residual connection rather than of an identity prior on channels
+  # where identity is a guaranteed error.
+  residual_exclude: [lon, lat]
