@@ -1,0 +1,96 @@
+# Everything at once: finer patch, matched receptive field, residual on the
+# channels where it belongs, and a loss that ignores the discarded ones.
+#
+#   sbatch --export=ALL,SAVE_TOP_K=3,FRESH=1,RUNDIR=runs/probe_combo,\
+#          OVERLAY=experiments/probe_combo.yaml job_scripts/train_h200.sh
+#
+# This is a candidate, not an attribution experiment. Four things change at
+# once, so a win cannot be assigned to any of them - which is the right trade
+# when the question is "is there a better model to keep training" rather than
+# "which of these helps". probe_residual_all and probe_lossexcl are still
+# running one variable each, and they are what will explain a result here.
+#
+# ── 1. patch_shape (2, 4, 6) -> (2, 2, 6) ────────────────────────────────
+#   radial tokens   20 -> 40,  patch_r 0.506 -> 0.253 deg (one ERA5 cell)
+#
+# ── 2. windows widened to keep the receptive field ───────────────────────
+# This is what probe_patch226 got wrong. A window sees window_r x patch_r
+# cells, so halving the patch halved the radius each window covers:
+#
+#   base       20 tokens, window 10, patch 4  ->  10 x 4 x 0.127 = 5.06 deg
+#   patch226   40 tokens, window 10, patch 2  ->  10 x 2 x 0.127 = 2.53 deg
+#   here       40 tokens, window 20, patch 2  ->  20 x 2 x 0.127 = 5.06 deg
+#
+# So patch226's 0.84 % deficit was measured against a model that also saw half
+# the storm per window, and could not be read as a verdict on patch size.
+# Divisibility: 40/20 = 2 windows, and after DownSample 20/10 = 2. Both exact.
+# Attention cost roughly doubles - window volume 300 -> 600, squared, over half
+# as many windows - but patch226 ran only 6 % slower than base at twice the
+# tokens, so this model is nowhere near attention-bound and the real cost
+# should be far below the FLOP count. Budget ~2.5 h and check.
+#
+# ── 3. residual, excluding the ten channels identity gets wrong ──────────
+# The seven prognostic fields plus tp, mtnlwrf and sst_filled keep it - those
+# are what the model actually has to predict. Everything supplied from
+# outside each step is left out, along with lon/lat.
+#
+# ── 4. eight prescribed channels dropped from the loss ───────────────────
+# Their predictions are overwritten from the new centre and timestamp at every
+# inference step, so they reach neither the forecast nor the next input.
+# Surviving weights are scaled by 20/12 so the surface term stays a mean and
+# surface_weight keeps its meaning.
+#
+# ── Reading the result ───────────────────────────────────────────────────
+# val_loss here is a mean over TWELVE surface channels; probe_base's is over
+# twenty. The two numbers are not comparable. Compare loss_upper, which is
+# untouched, or compare forecasts. This is the one trap in this file.
+#
+# ── Learning rate ────────────────────────────────────────────────────────
+# Unchanged at 5e-5. Note the loss exclusion raises the gradient on every
+# surviving surface channel by 20/12, so the effective surface learning rate
+# is 1.67x - well inside the margin between 5e-5 and the 4e-4 that diverged,
+# but the reason to watch gradient_2norm on the first few hundred steps.
+# Changing the architecture and the learning rate together would make a
+# divergence unattributable.
+
+seed_everything: 2
+
+trainer:
+  max_steps: 20000
+
+data:
+  data_spatial_shape: [13, 80, 360]
+  batch_size: 4
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  optimizer_args:
+    lr: 0.00005
+  lr_scheduler_name: constant_warmup
+  lr_scheduler_args:
+    warmup_steps: 1000
+
+  patch_shape: [2, 2, 6]
+  window_shape1: [2, 20, 15]
+  window_shape2: [2, 10, 30]
+
+  residual: true
+  # The eight prescribed channels, plus the two coordinate ones.
+  #
+  # A residual connection is a prior on something the model has to
+  # predict. These eight are supplied from outside at every step -
+  # recomputed from the new centre and timestamp and written over the
+  # model's values - so its prediction of them is discarded and a prior
+  # on it buys nothing, however good or bad identity happens to be for
+  # that channel. doy_sin/doy_cos are on the list for that reason and
+  # not because identity is wrong for them; it is very nearly right.
+  #
+  # lon and lat are different: they ARE used - averaged to place the next
+  # domain - so they stay in the loss, and they are excluded here because
+  # for them identity means 'the storm did not move'.
+  residual_exclude:
+    [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos,
+     lon, lat]
+
+  loss_exclude_channels:
+    [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos]

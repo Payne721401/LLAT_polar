@@ -51,6 +51,19 @@ model:
     warmup_steps: 1000
 
   residual: true
+  # The eight prescribed channels, plus the two coordinate ones.
+  #
+  # A residual connection is a prior on something the model has to
+  # predict. These eight are supplied from outside at every step -
+  # recomputed from the new centre and timestamp and written over the
+  # model's values - so its prediction of them is discarded and a prior
+  # on it buys nothing, however good or bad identity happens to be for
+  # that channel. doy_sin/doy_cos are on the list for that reason and
+  # not because identity is wrong for them; it is very nearly right.
+  #
+  # lon and lat are different: they ARE used - averaged to place the next
+  # domain - so they stay in the loss, and they are excluded here because
+  # for them identity means 'the storm did not move'.
   residual_exclude:
     [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos,
      lon, lat]
