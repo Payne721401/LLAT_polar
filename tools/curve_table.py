@@ -62,12 +62,26 @@ def main(args):
                 + (f"; did you mean one of {near[:6]}?" if near else ""))
         series[label] = merged[args.tag]
 
-    steps = sorted(set.intersection(*(set(s) for s in series.values())))
-    if not steps:
-        raise SystemExit(
-            f"the runs share no step at which {args.tag!r} was logged - they "
-            f"were probably logged on different intervals. Compare them one at "
-            f"a time, or pick a tag they both write at the same cadence.")
+    # Nearest match, not intersection. Requiring an exact shared step looked
+    # right and quietly truncated: five 105k-step runs shared only 28 steps and
+    # none past 12,711, because a resumed run replays its step counter and the
+    # grids drift apart. The table then showed a tenth of the training and
+    # said nothing about it. The first run's steps set the grid; every other
+    # run answers with its closest logged step, and a run whose nearest point
+    # is further than --tol away is left blank rather than faked.
+    grid = sorted(series[runs[0][0]])
+    if not grid:
+        raise SystemExit(f"{runs[0][0]}: {args.tag!r} has no values")
+    keys = {l: sorted(series[l]) for l, _ in runs}
+
+    def near(label, s):
+        ks = keys[label]
+        i = min(range(len(ks)), key=lambda j: abs(ks[j] - s))
+        if abs(ks[i] - s) > args.tol:
+            return None, None
+        return ks[i], series[label][ks[i]]
+
+    steps = grid
     if args.max_step:
         steps = [s for s in steps if s <= args.max_step]
     if args.head:
@@ -77,27 +91,33 @@ def main(args):
         steps = steps[::args.every] + ([steps[-1]] if steps[-1] not in
                                        steps[::args.every] else [])
 
-    print(f"{args.tag}   {len(steps)} of the "
-          f"{len(set.intersection(*(set(s) for s in series.values())))} shared "
-          f"steps")
+    print(f"{args.tag}   printing {len(steps)} of {len(grid)} steps on "
+          f"{runs[0][0]}'s grid, matched to within {args.tol}")
     head = f"{'step':>8}" + "".join(f"{l:>12}" for l, _ in runs)
     print(head + ("      best" if len(runs) > 1 else ""))
     print("-" * (len(head) + (10 if len(runs) > 1 else 0)))
-    lead_runs = []
+    lead_runs, n_flag, n_val = [], 0, 0
     for s in steps:
-        row = {l: series[l][s] for l, _ in runs}
-        best = min(row, key=row.get)
-        lead_runs.append(best)
+        row = {l: near(l, s)[1] for l, _ in runs}
+        have = {l: v for l, v in row.items() if v is not None}
+        best = min(have, key=have.get) if have else None
+        if best:
+            lead_runs.append(best)
         line = f"{s:>8}"
         for l, _ in runs:
             v = row[l]
-            mark = "*" if args.flag and v > args.flag else " "
-            line += f"{v:>11.5g}{mark}"
-        print(line + (f"   {best}" if len(runs) > 1 else ""))
+            if v is None:
+                line += f"{'-':>11} "
+                continue
+            n_val += 1
+            hot = args.flag and v > args.flag
+            n_flag += bool(hot)
+            line += f"{v:>11.5g}{'*' if hot else ' '}"
+        print(line + (f"   {best}" if len(runs) > 1 and best else ""))
 
     if args.flag:
-        n = sum(1 for s in steps for l, _ in runs if series[l][s] > args.flag)
-        print(f"\n  * above {args.flag:g}: {n} of {len(steps) * len(runs)} "
+        n = n_flag
+        print(f"\n  * above {args.flag:g}: {n} of {n_val} "
               f"values. With gradient_clip_val at 2 those steps were clipped;")
         print("  a run clipping from the start is not training, it is being "
               "held together by the clip.")
@@ -135,6 +155,11 @@ if __name__ == "__main__":
     p.add_argument("--every", type=int, default=1,
                    help="print every Nth shared step; the last is always kept")
     p.add_argument("--max-step", type=int, default=0)
+    p.add_argument("--tol", type=int, default=600,
+                   help="how far a run's nearest logged step may be from the "
+                        "grid before it prints blank. One validation interval "
+                        "here is about 454 steps, so 600 matches at most one "
+                        "point either side and never invents a value")
     p.add_argument("--flag", type=float, default=0.0,
                    help="mark values above this with *. For gradient_2norm use "
                         "the trainer's gradient_clip_val, which is 2 here")
