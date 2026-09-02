@@ -257,7 +257,11 @@ def draw(acc, runs, names, leads, order, args):
                 if a and b and a[2] and b[2]:
                     ra = (a[0] / a[2]) ** 0.5
                     rb = (b[0] / b[2]) ** 0.5
-                    ys.append(100 * (rb - ra) / ra)
+                    # At lead 0 both runs write the initial condition verbatim,
+                    # so every error is exactly zero and the ratio is 0/0. A
+                    # percentage difference between two perfect scores is not a
+                    # number; the panel stays blank rather than crashing.
+                    ys.append(100 * (rb - ra) / ra if ra else np.nan)
                 else:
                     ys.append(np.nan)
             ax.plot(x, ys, 'o-', color=colours[j % len(colours)], label=other)
