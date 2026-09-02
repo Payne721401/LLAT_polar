@@ -52,6 +52,17 @@ def main(args):
         runs.append((label or os.path.basename(spec.rstrip("/")),
                      os.path.expanduser(path or spec)))
 
+    if args.list is not None:
+        merged, _files = tvg.curves(runs[0][1])
+        pat = '' if args.list == '*' else args.list
+        hit = sorted(t for t in merged if pat in t)
+        print(f"{len(hit)} of {len(merged)} tags in {runs[0][0]}"
+              + (f" matching {pat!r}" if pat else ""))
+        for t in hit:
+            ks = sorted(merged[t])
+            print(f"  {t:<40} {len(ks):>6} points, steps {ks[0]}..{ks[-1]}")
+        return
+
     series = {}
     for label, path in runs:
         merged, _files = tvg.curves(path)
@@ -146,6 +157,12 @@ if __name__ == "__main__":
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--run", action="append", required=True,
                    metavar="LABEL=DIR")
+    p.add_argument("--list", nargs="?", const="*", default=None,
+                   metavar="SUBSTRING",
+                   help="list the tags in the first run and stop. 491 are "
+                        "logged here, most per variable and level, so guessing "
+                        "a name costs a round trip: --list grad_2.0 or "
+                        "--list val_RMSE shows what is actually there")
     p.add_argument("--tag", default="val_loss",
                    help="any logged tag: val_loss, train_loss_epoch, "
                         "gradient_2norm, or a per-layer grad norm")
