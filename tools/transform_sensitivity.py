@@ -154,6 +154,45 @@ def main(args):
         rows[name] = fe / fa if fa else np.nan
         print(f"{name:<14}{fa:>12.4g}{fe:>12.4g}{100 * rows[name]:>12.1f}%")
 
+    # ── Signed bias by ring, which is the question this file was reopened for ──
+    #
+    # The RMS above says how much the round trip disturbs a field. It cannot say
+    # whether the disturbance has a direction, and that is what matters here:
+    # the polar forecasts carry an msl bias of -125 Pa inside 100 km at +24 h,
+    # six times the Cartesian model's, and the transform runs twice per step -
+    # 128 times out to 192 h, each on the previous output. If the round trip
+    # alone has a core bias, part of that number is the pipeline rather than the
+    # model, and the fix is a different one.
+    #
+    # Rings in kilometres, with the cos(lat) factor, matching
+    # tools/season_radial_rmse.py so the two tables can be read against each
+    # other. The innermost ring is where a polar mesh is most degenerate:
+    # Theta points all converge on the pole, so the interpolation there is
+    # doing the most work and has the most opportunity to be one-sided.
+    edges = [float(x) for x in args.rings.split(',')]
+    names = [f"{edges[k]:.0f}-{edges[k+1]:.0f}" for k in range(len(edges) - 1)]
+    dxkm = (lon2d - lon2d[n // 2, n // 2]) * 111.32 * np.cos(np.deg2rad(lat2d))
+    dykm = (lat2d - lat2d[n // 2, n // 2]) * 111.32
+    rkm = np.hypot(dxkm, dykm)
+
+    print()
+    print("signed bias of the round trip alone - no model, no forecast")
+    print(f"{'field':<14}" + "".join(f"{nm + ' km':>16}" for nm in names))
+    print("-" * (14 + 16 * len(names)))
+    for name, (a, b) in fields.items():
+        line = f"{name:<14}"
+        for k in range(len(names)):
+            sel = (inside & np.isfinite(a) & np.isfinite(b)
+                   & (rkm >= edges[k]) & (rkm < edges[k + 1]))
+            line += (f"{float(np.mean(b[sel] - a[sel])):>16.5g}" if sel.any()
+                     else f"{'-':>16}")
+        print(line)
+    print()
+    print("  One pass. The forecast applies this 128 times out to 192 h, each")
+    print("  on the output of the last, so a bias here does not stay this size.")
+    print("  Compare against the model's own core bias from season_radial_rmse:")
+    print("  msl -125.6 Pa inside 100 km at +24 h, against the Cartesian -20.5.")
+
     wind = max(rows.get('u', 0), rows.get('v', 0))
     print()
     if wind and rows.get('vorticity'):
@@ -264,6 +303,10 @@ if __name__ == "__main__":
                         "model runs on 81x81")
     p.add_argument("--R", type=int, default=40)
     p.add_argument("--Theta", type=int, default=180)
+    p.add_argument("--rings", default="0,100,300,600,1110",
+                   help="ring boundaries in km for the signed-bias table, "
+                        "matching season_radial_rmse so the two can be read "
+                        "against each other")
     p.add_argument("--rotate", action="store_true",
                    help="include the u/v -> vt/vr -> u/v rotation the vt_vr "
                         "model cards use")
