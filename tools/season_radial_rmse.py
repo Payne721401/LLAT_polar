@@ -204,29 +204,48 @@ def main(args):
                     v = rmse(l, var, h, k)
                     line += f"{v:>14.4g}" if v is not None else f"{'-':>14}"
             print(line)
+        # Both of the blocks below used to print a single row, at --lead, and
+        # answering "how does this change with lead" meant re-running the whole
+        # season once per lead - ten passes over the same files producing data
+        # that one pass already had in memory. The accumulator is indexed by
+        # lead throughout, so the loop is free.
+        #
+        # It is also the question that matters. The polar penalty is at the RIM
+        # at +6 h (msl +28.7 % beyond 600 km, -6.1 % inside 100) and in the CORE
+        # at +120 h (+54.8 % against +10.2 %). Those are different failures, and
+        # only the shape against lead distinguishes "the boundary error is
+        # propagating inward" from "one error decays while another grows".
         if args.bias:
-            print("  bias (signed mean), per ring:")
-            for l, *_ in runs:
-                line = f"  {l[:14]:<16}"
-                for k in range(len(names)):
-                    v = bias(l, var, args.lead, k)
-                    line += f"{v:>26.4g}" if v is not None else f"{'-':>26}"
-                print(line)
-            print(f"    at +{args.lead} h. A bias that is flat across the rings "
-                  f"is a whole-field offset;")
-            print(f"    one that falls off with radius started near the "
-                  f"centre. RMSE cannot tell them apart.")
+            print("  bias (signed mean), per ring, by lead:")
+            print(f"{'lead':>5} {'run':<14}"
+                  + "".join(f"{nm + ' km':>14}" for nm in names))
+            for h in leads:
+                if all(bias(l, var, h, 0) is None for l, *_ in runs):
+                    continue
+                for l, *_ in runs:
+                    line = f"{h:>5} {l[:14]:<14}"
+                    for k in range(len(names)):
+                        v = bias(l, var, h, k)
+                        line += f"{v:>14.4g}" if v is not None else f"{'-':>14}"
+                    print(line)
+            print("    A bias flat across the rings is a whole-field offset;")
+            print("    one that falls off with radius started near the centre.")
+            print("    RMSE cannot tell them apart.")
 
         if len(runs) > 1:
             other = runs[1][0]
-            print(f"  {other} against {base}, per ring, % (negative is better):")
-            line = f"{'':>5}"
-            for h in [args.lead]:
+            print(f"  {other} against {base}, per ring, % "
+                  f"(negative is better):")
+            print(f"{'lead':>5}" + "".join(f"{nm + ' km':>14}" for nm in names))
+            for h in leads:
+                if not rmse(base, var, h, 0):
+                    continue
+                line = f"{h:>5}"
                 for k in range(len(names)):
                     a, b = rmse(base, var, h, k), rmse(other, var, h, k)
-                    line += (f"{100 * (b - a) / a:>27.1f}%"
-                             if a and b else f"{'-':>28}")
-            print(f"  at +{args.lead} h:" + line[5:])
+                    line += (f"{100 * (b - a) / a:>13.1f}%"
+                             if a and b else f"{'-':>14}")
+                print(line)
 
     draw(acc, runs, names, leads, order, args)
 
