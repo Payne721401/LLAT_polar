@@ -110,7 +110,7 @@ def main(args):
 
     era5_root = os.path.expanduser(args.era5_root)
     leads = list(range(0, int(args.max_lead) + 1, args.every))
-    # acc[label][var][lead][ring] = [sum of squares, count]
+    # acc[label][var][lead][ring] = [sum of squares, sum, count]
     acc = {l: {} for l, *_ in runs}
 
     for n, (tc, init_s) in enumerate(common):
@@ -156,15 +156,29 @@ def main(args):
                     for l in fs:
                         d = fs[l][var][sel] - t[var][sel]
                         s = (acc[l].setdefault(var, {}).setdefault(h, {})
-                             .setdefault(k, [0.0, 0]))
+                             .setdefault(k, [0.0, 0.0, 0]))
                         s[0] += float(np.sum(d * d))
-                        s[1] += int(d.size)
+                        s[1] += float(np.sum(d))
+                        s[2] += int(d.size)
         if args.print_every and (n + 1) % args.print_every == 0:
             print(f"    {n + 1}/{len(common)}", flush=True)
 
     def rmse(label, var, h, k):
         s = acc[label].get(var, {}).get(h, {}).get(k)
-        return (s[0] / s[1]) ** 0.5 if s and s[1] else None
+        return (s[0] / s[2]) ** 0.5 if s and s[2] else None
+
+    def bias(label, var, h, k):
+        """Mean signed error in the ring.
+
+        RMSE cannot answer where an error comes from. It mixes a systematic
+        offset with scatter, and the inner rings carry a far larger signal - msl
+        varies by 1110 Pa inside 100 km against 440 at the rim - so a constant
+        relative error reads as a much larger RMSE there whatever its origin.
+        Only the signed mean separates 'the whole field is displaced' from 'the
+        core is displaced'.
+        """
+        s = acc[label].get(var, {}).get(h, {}).get(k)
+        return s[1] / s[2] if s and s[2] else None
 
     # Keep the order the caller asked for, dropping anything no run produced.
     wanted = sfc_names + [v + str(lev) for v, lev in upper_pairs]
@@ -189,6 +203,19 @@ def main(args):
                     v = rmse(l, var, h, k)
                     line += f"{v:>14.4g}" if v is not None else f"{'-':>14}"
             print(line)
+        if args.bias:
+            print("  bias (signed mean), per ring:")
+            for l, *_ in runs:
+                line = f"  {l[:14]:<16}"
+                for k in range(len(names)):
+                    v = bias(l, var, args.lead, k)
+                    line += f"{v:>26.4g}" if v is not None else f"{'-':>26}"
+                print(line)
+            print(f"    at +{args.lead} h. A bias that is flat across the rings "
+                  f"is a whole-field offset;")
+            print(f"    one that falls off with radius started near the "
+                  f"centre. RMSE cannot tell them apart.")
+
         if len(runs) > 1:
             other = runs[1][0]
             print(f"  {other} against {base}, per ring, % (negative is better):")
@@ -226,9 +253,9 @@ def draw(acc, runs, names, leads, order, args):
             for k in range(len(names)):
                 a = acc[base].get(var, {}).get(args.lead, {}).get(k)
                 b = acc[other].get(var, {}).get(args.lead, {}).get(k)
-                if a and b and a[1] and b[1]:
-                    ra = (a[0] / a[1]) ** 0.5
-                    rb = (b[0] / b[1]) ** 0.5
+                if a and b and a[2] and b[2]:
+                    ra = (a[0] / a[2]) ** 0.5
+                    rb = (b[0] / b[2]) ** 0.5
                     ys.append(100 * (rb - ra) / ra)
                 else:
                     ys.append(np.nan)
@@ -277,6 +304,11 @@ if __name__ == "__main__":
                         "and inner core (RMW is 33-55 km here), the inner "
                         "rainbands, the outer circulation, and the environment "
                         "out to 10 degrees where the polar disc ends")
+    p.add_argument("--bias", action="store_true",
+                   help="also print the signed mean per ring. RMSE mixes an "
+                        "offset with scatter and the inner rings carry a much "
+                        "larger signal, so it cannot say where an error "
+                        "originated; the signed mean can")
     p.add_argument("--lead", type=int, default=120,
                    help="the lead the figure and the summary line use")
     p.add_argument("--max-lead", type=float, default=192)
