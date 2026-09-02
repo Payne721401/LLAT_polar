@@ -204,6 +204,85 @@ carrying.
 
 ---
 
+## 12. The residual, and why the loss hypotheses are in trouble (2026-09-02)
+
+### The residual connection: what was tried, what was ruled out
+
+`residual_exclude` names the ten channels the residual skips - the eight
+prescribed ones plus lon and lat. A residual is a prior on something the model
+has to predict; the eight are recomputed from the new centre and timestamp at
+every inference step, so a prior on them buys nothing however good identity
+happens to be. lon and lat are the exception, genuinely used to place the next
+domain, and excluded for the opposite reason: there identity means the storm
+did not move, and this model already runs slow.
+
+**Code checked, no defect.** The mask is applied once at Res Save so both
+res_conn_after_smooth branches use it; the upper residual is deliberately
+unmasked since no upper channel is prescribed; the mask is a non-persistent
+buffer so it follows .to(device) and stays out of the state_dict; and input and
+target share one normalisation, so target_std - input_std is the true change
+divided by sigma and the residual is in the right units.
+
+**It still lost**, on almost every surface variable, having started far ahead -
+msl 171.89 against base's 480.08 at step 453 and level by 20,000.
+
+Two explanations tested and both refuted:
+
+- **"the residual target is too small to learn."** No.
+  `tools/residual_scale.py` on the 3-hourly training data: msl 0.261, v10
+  0.273, t2m 0.374, sp 0.351, mtnlwrf 0.453, tp 0.799, tightest is sst at
+  0.167. **Nothing below 0.1.** The network is not being asked for a number
+  beneath its own resolution.
+- **"its gradients vanish."** Not straightforwardly. `curve_table --ratio
+  grad_2.0` gives a median of 0.759 over 191 tags with 181 below one, so they
+  are smaller - but structured rather than uniform: patch_recover.conv_upper
+  0.429 and downsample.norm.weight 0.385 at the output and middle, while
+  patch_embed.conv_upper.weight reads **1.800** and the layer1 blocks 1.05-1.53.
+  The output head having less to do is expected; the input side getting *more*
+  gradient is not explained, and the run's final error is larger than base's,
+  which should have made every gradient bigger rather than smaller.
+
+**So the residual's failure is unexplained.** It is cheap to leave alone and
+that is the recommendation, but the two obvious causes are gone.
+
+### The loss hypotheses do not survive the radial data
+
+P1's stated rationale was that L1 tolerates a uniform offset. Both halves are
+now contradicted:
+
+1. **The offset is not uniform.** The msl bias falls 11x from core to rim
+   (-1213 to -107 Pa). A uniform offset is flat, and the Cartesian z500 bias
+   is what flat looks like: -221, -190, -170, -197.
+2. **The Cartesian model uses the same loss** - unweighted L1, the same twenty
+   channels, the same surface_weight - and carries 3 % bias against the polar
+   model's 41 %. Identical loss, different outcome, so the loss alone is not
+   the cause.
+
+P5's area-weighting argument survived (2) - it is the one structural difference
+between the grids, the core being over-weighted about 40x per unit area - but
+runs into a harder problem:
+
+**The core penalty is absent at +24 h.** msl inside 100 km: +0.9 % at 24 h,
+then +8.3, +20.3, +40.3, +54.7 at 48 to 120. The loss is single-step. Eight
+autoregressive steps in, the core is level; forty steps in it is 55 % worse.
+**A single-step weighting - L1 against MSE, or w(r) - cannot produce an error
+that only appears after tens of steps.**
+
+What does act over tens of steps is **rollout drift**: the model is trained on
+one step and asked for sixty-four, and a small systematic error compounds
+fastest where the field's gradients are steepest, which is the core. That is
+**P6, untouched**, and it is the only candidate whose mechanism matches both
+the location and the timing.
+
+**The discriminating measurement, one command:** the signed bias by ring at
++24, +48, +72, +96, +120 h (`season_radial_rmse --bias --lead L`). A core bias
+already large at +24 h is a single-step problem and P1/P5 are the right
+answers. A core bias near zero at +24 h that grows is rollout, and neither is.
+The RMSE parity at +24 h says the second, but that is an inference from RMSE
+and the bias has not been measured at short lead.
+
+---
+
 ## 4. The paper, read (LLAT_paper.pdf, JAS-D-26-0056)
 
 Facts that correct earlier assumptions in this project:
