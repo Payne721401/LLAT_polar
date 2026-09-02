@@ -321,6 +321,74 @@ not be quoted.
 
 ---
 
+## 3c. RMSE by distance from the centre - the grid works, the training does not
+
+```
+python tools/season_radial_rmse.py --era5-root /wk2/yungyun/FCNV2_TC   --ibtracs ... --clip-to-best-track --max-lead 192 --every 24 --lead 120
+```
+
+Every RMSE above is a domain average. On an 81x81 box the ring inside 100 km is
+45 cells of 6,561 - seven tenths of one percent - so the statistic that decides
+whether the polar formulation works at all was being drowned by the region
+where it makes no claim.
+
+### At +24 h the inner core is ahead on six of ten variables
+
+polar_1way against cart_1way, 0-100 km, +24 h:
+
+| better | | worse | |
+|---|--:|---|--:|
+| u10 | **-7.8 %** | z500 | +12.6 % |
+| t2m | **-6.3 %** | v10 | +1.3 % |
+| q700 | **-5.7 %** | w500 | +1.1 % |
+| tp | **-5.1 %** | msl | +0.9 % |
+| t850 | -1.2 % | | |
+| tcwv | -0.8 % | | |
+
+**The resolution advantage is real and it appears exactly where the grid was
+designed to buy it.**
+
+### By +120 h it is gone, and the loss grows from the centre outward
+
+| ring | msl | z500 | t850 | tcwv | q700 |
+|---|--:|--:|--:|--:|--:|
+| 0-100 km | **+54.8 %** | **+35.0 %** | **+21.6 %** | **+21.5 %** | **+18.2 %** |
+| 100-300 | +59.9 % | +23.9 % | +8.9 % | +15.7 % | **-6.4 %** |
+| 300-600 | +34.1 % | +14.4 % | +1.2 % | +7.1 % | **-5.3 %** |
+| 600-1110 | +10.2 % | +0.1 % | +5.1 % | +2.1 % | +1.2 % |
+
+msl in the inner ring, by lead: **+0.9 % at 24 h, +8.3 at 48, +20.3 at 72,
++40.3 at 96, +54.7 at 120.** Monotonic from level.
+
+**That rules out the grid as the cause.** A singularity at r = 0, or the
+interpolation onto the polar mesh, would be there at +24 h and roughly constant
+after. This accumulates, which is what an error in the model's own dynamics
+does.
+
+### It unifies everything else in this document
+
+- the **11 hPa centre offset** (section 3) is what an inner-ring msl penalty
+  looks like measured at a point;
+- the **hydrostatic drift** (z500 +35 % inner against +0.1 % outer) is the same
+  error at a different level;
+- **two-way harm** (section 1b): the feedback writes back inside 7.5 deg =
+  833 km, which covers the three rings where the polar field is 34-60 % worse.
+  It is putting the worst part of the polar field into FCNV2. That also predicts
+  the radius cannot be tuned out of trouble - polar is worse in every ring, only
+  less so at the rim;
+- **q700** is the one variable that wins in the middle rings, and the only one
+  not dominated by the centre error.
+
+**So the polar grid is not the problem and the polar training is.** Those are
+separable, and the second is P1.
+
+**P1's acceptance test is now concrete**: after the loss change, the inner ring
+at +120 h should look like the inner ring at +24 h does today - six of ten
+variables ahead - rather than ten of ten behind. That is a far sharper target
+than a validation loss.
+
+---
+
 ## 4. Provenance
 
 - 2024 is complete in every root. The 2025 storms are not: `202504W`,
