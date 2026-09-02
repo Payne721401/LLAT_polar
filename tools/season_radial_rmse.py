@@ -94,8 +94,8 @@ def main(args):
             upper_pairs.append((v.strip(), int(lev)))
 
     runs = [ss.parse_run(s, args.mode) for s in args.runs]
-    if args.clip_to_best_track and not args.ibtracs:
-        raise SystemExit("--clip-to-best-track needs --ibtracs")
+    if (args.clip_to_best_track or args.min_vmax) and not args.ibtracs:
+        raise SystemExit("--clip-to-best-track and --min-vmax need --ibtracs")
     if args.ibtracs:
         print(f"IBTrACS: {len(ss.ibt.load(args.ibtracs))} storms", flush=True)
 
@@ -118,10 +118,11 @@ def main(args):
             break
         init = datetime.datetime.strptime(init_s, "%Y%m%d%H")
         clip = None
-        if args.clip_to_best_track:
+        if args.clip_to_best_track or args.min_vmax:
             sid = ss.storm_sid(args.ibtracs, tc, init_s,
                                found[runs[0][0]][(tc, init_s)])
-            clip = ss.ibt.times(args.ibtracs, sid) if sid else set()
+            clip = (ss.storm_times(args.ibtracs, sid, args.min_vmax)
+                    if sid else set())
         for h in leads:
             valid = init + datetime.timedelta(hours=h)
             if clip is not None and valid not in clip:
@@ -293,6 +294,15 @@ if __name__ == "__main__":
                    help="the first is the reference every other is compared to")
     p.add_argument("--era5-root", required=True)
     p.add_argument("--ibtracs", default=None)
+    p.add_argument("--min-vmax", type=float, default=0.0,
+                   help="score only leads where the best-track Vmax at that "
+                        "time is at least this, in kt. 65 is the paper's TY "
+                        "group. This is the intensity AT THE FORECAST TIME, "
+                        "not the storm's lifetime peak: a typhoon that has "
+                        "decayed to a depression contributes its strong hours "
+                        "and not its weak ones, which is what separates "
+                        "'the model is bad at typhoons' from 'the sample is "
+                        "mostly weak systems'. Implies --clip-to-best-track")
     p.add_argument("--clip-to-best-track", action="store_true")
     p.add_argument("--version", default=None)
     p.add_argument("--mode", default="one-way",

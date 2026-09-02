@@ -59,10 +59,13 @@ def clip_times(args, tc_id, init_str, run_dir):
     statistics it hid a 20-28 % difference between the two models. The paper's
     rule is one sample per best-track record, and its archive is IBTrACS.
     """
-    if not getattr(args, "clip_to_best_track", False):
+    if not (getattr(args, "clip_to_best_track", False)
+            or getattr(args, "min_vmax", 0.0)):
         return None
     sid = ss.storm_sid(args.ibtracs, tc_id, init_str, run_dir)
-    return ss.ibt.times(args.ibtracs, sid) if sid else set()
+    return (ss.storm_times(args.ibtracs, sid,
+                           getattr(args, 'min_vmax', 0.0))
+            if sid else set())
 
 pf = ss.pf
 
@@ -310,6 +313,15 @@ if __name__ == "__main__":
     p.add_argument("--ibtracs", default=None, metavar="CSV",
                    help="IBTrACS basin file, for --clip-to-best-track. Storms "
                         "are matched by position and time, never by number")
+    p.add_argument("--min-vmax", type=float, default=0.0,
+                   help="score only leads where the best-track Vmax at that "
+                        "time is at least this, in kt. 65 is the paper's TY "
+                        "group. This is the intensity AT THE FORECAST TIME, "
+                        "not the storm's lifetime peak: a typhoon that has "
+                        "decayed to a depression contributes its strong hours "
+                        "and not its weak ones, which is what separates "
+                        "'the model is bad at typhoons' from 'the sample is "
+                        "mostly weak systems'. Implies --clip-to-best-track")
     p.add_argument("--clip-to-best-track", action="store_true",
                    help="score only leads with an IBTrACS record. Without it "
                         "the ERA5 boxes carry the storm days past the last "

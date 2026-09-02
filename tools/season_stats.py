@@ -162,6 +162,25 @@ def find_starts(root, version, mode, subdir=None):
     return out
 
 
+def storm_times(ibt_path, sid, min_vmax=0.0):
+    """Valid times worth scoring: those with a record, and strong enough.
+
+    One function so that every tool filters identically. min_vmax is the
+    best-track Vmax AT THAT TIME, which is the paper's TY definition and not
+    the storm's lifetime peak - a typhoon that has decayed to a depression
+    contributes the hours it was a typhoon and not the hours it was not. That
+    distinction is the whole point: it separates "the model is bad at
+    typhoons" from "most of the sample is weak systems".
+    """
+    d = ibt.load(ibt_path).get(sid)
+    if not d:
+        return set()
+    if not min_vmax:
+        return set(d["rec"])
+    return {t for t, r in d["rec"].items()
+            if r["vmax"] is not None and r["vmax"] >= min_vmax}
+
+
 def storm_sid(ibt_path, tc_id, init_str, run_dir):
     """The IBTrACS storm this case is about, identified by where it started.
 
@@ -222,7 +241,7 @@ def errors_for(run_dir, era5_dir, tc_id, init_str, bt=None, clip=None):
 
 
 def collect(root, era5_root, version, mode, limit=0, keep=None, subdir=None,
-            ibt_path=None, jobs=1, use_bt=False, clip=False):
+            ibt_path=None, jobs=1, use_bt=False, clip=False, min_vmax=0.0):
     """Every case's error curve, keyed by lead, plus the per-case curves.
 
     jobs > 1 spreads the cases over threads. The value of that depends entirely
@@ -260,7 +279,7 @@ def collect(root, era5_root, version, mode, limit=0, keep=None, subdir=None,
             if use_bt:
                 bt = ibt.positions(ibt_path, sid)
             if clip:
-                times = ibt.times(ibt_path, sid)
+                times = storm_times(ibt_path, sid, min_vmax)
         if bt is None and not os.path.isdir(era5):
             return tc, init, path, None, f"{tc} (no ERA5 directory)"
         e = errors_for(path, era5, tc, init, bt, times)
@@ -349,16 +368,18 @@ def main(args):
 
     runs = [parse_run(r, args.mode) for r in args.runs]
     use_bt = args.truth == "best"
-    clip = args.clip_to_best_track or use_bt
+    clip = args.clip_to_best_track or use_bt or bool(args.min_vmax)
     if (use_bt or clip) and not args.ibtracs:
-        raise SystemExit("--truth best and --clip-to-best-track need --ibtracs")
+        raise SystemExit("--truth best, --clip-to-best-track and --min-vmax "
+                         "all need --ibtracs")
     ibt_path = os.path.expanduser(args.ibtracs) if args.ibtracs else None
     if ibt_path:
         n = len(ibt.load(ibt_path))     # parse once, before any thread pool
         print(f"IBTrACS: {n} storms from {ibt_path}", flush=True)
     print("truth: " + ("IBTrACS position" if use_bt else "ERA5 domain centre")
-          + ("; leads clipped to the IBTrACS record" if clip else ""),
-          flush=True)
+          + ("; leads clipped to the IBTrACS record" if clip else "")
+          + (f"; only where Vmax >= {args.min_vmax:g} kt"
+             if args.min_vmax else ""), flush=True)
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
 
     # Restrict every run to the cases they all have. A median over 86 cases and a
@@ -377,7 +398,7 @@ def main(args):
     for name, root, mode, subdir in runs:
         by_lead, n_cases, skipped, per_case = collect(
             root, args.era5_root, args.version, mode, args.limit, keep,
-            subdir, ibt_path, args.jobs, use_bt, clip)
+            subdir, ibt_path, args.jobs, use_bt, clip, args.min_vmax)
         seen = sorted({p.split(os.sep)[-2] for _, _, p, _ in per_case})
         print(f"  {name}: {n_cases} cases under {', '.join(seen) or '(none)'}",
               flush=True)
@@ -462,6 +483,15 @@ if __name__ == "__main__":
                         "number - JMA numbers named storms and JTWC numbers "
                         "every depression, so 202405W is MARIA while WP052024 "
                         "is GAEMI")
+    p.add_argument("--min-vmax", type=float, default=0.0,
+                   help="score only leads where the best-track Vmax at that "
+                        "time is at least this, in kt. 65 is the paper's TY "
+                        "group. This is the intensity AT THE FORECAST TIME, "
+                        "not the storm's lifetime peak: a typhoon that has "
+                        "decayed to a depression contributes its strong hours "
+                        "and not its weak ones, which is what separates "
+                        "'the model is bad at typhoons' from 'the sample is "
+                        "mostly weak systems'. Implies --clip-to-best-track")
     p.add_argument("--clip-to-best-track", action="store_true",
                    help="score only leads with an IBTrACS record. Without it "
                         "the ERA5 boxes carry the storm days past the last "

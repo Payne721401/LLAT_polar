@@ -67,10 +67,11 @@ pf = ss.pf
 
 def clip_times(args, tc_id, init_str, run_dir):
     """Valid times with an IBTrACS record, or None when not clipping."""
-    if not args.clip_to_best_track:
+    if not (args.clip_to_best_track or args.min_vmax):
         return None
     sid = ss.storm_sid(args.ibtracs, tc_id, init_str, run_dir)
-    return ss.ibt.times(args.ibtracs, sid) if sid else set()
+    return (ss.storm_times(args.ibtracs, sid, args.min_vmax)
+            if sid else set())
 
 
 def ring(field2d, r_deg, res_deg, n_theta):
@@ -152,8 +153,8 @@ def collect(run_dir, era5_dir, tc_id, init_str, args, truth_cache):
 def main(args):
     args.radii = [float(x) for x in args.radii.split(",")]
     runs = [ss.parse_run(s, args.mode) for s in args.runs]
-    if args.clip_to_best_track and not args.ibtracs:
-        raise SystemExit("--clip-to-best-track needs --ibtracs")
+    if (args.clip_to_best_track or args.min_vmax) and not args.ibtracs:
+        raise SystemExit("--clip-to-best-track and --min-vmax need --ibtracs")
     if args.ibtracs:
         print(f"IBTrACS: {len(ss.ibt.load(args.ibtracs))} storms", flush=True)
 
@@ -256,6 +257,15 @@ if __name__ == "__main__":
                    metavar="NAME=PATH[@SELECTOR]")
     p.add_argument("--era5-root", required=True)
     p.add_argument("--ibtracs", default=None)
+    p.add_argument("--min-vmax", type=float, default=0.0,
+                   help="score only leads where the best-track Vmax at that "
+                        "time is at least this, in kt. 65 is the paper's TY "
+                        "group. This is the intensity AT THE FORECAST TIME, "
+                        "not the storm's lifetime peak: a typhoon that has "
+                        "decayed to a depression contributes its strong hours "
+                        "and not its weak ones, which is what separates "
+                        "'the model is bad at typhoons' from 'the sample is "
+                        "mostly weak systems'. Implies --clip-to-best-track")
     p.add_argument("--clip-to-best-track", action="store_true")
     p.add_argument("--version", default=None)
     p.add_argument("--mode", default="one-way",
