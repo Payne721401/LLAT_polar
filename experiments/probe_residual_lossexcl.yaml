@@ -1,0 +1,59 @@
+# The residual, on top of the loss that actually won. Base geometry.
+#
+#   sbatch --export=ALL,SAVE_TOP_K=3,FRESH=1,RUNDIR=runs/probe_residual_lossexcl,\
+#          OVERLAY=experiments/probe_residual_lossexcl.yaml job_scripts/train_h200.sh
+#
+# probe_residual_all lost to base and probe_lossexcl beat it. This asks whether
+# the loss change rescues the residual - the two interact, and neither of the
+# runs so far could see that.
+#
+# They interact in a specific way worth knowing before reading the result. The
+# eight prescribed channels are out of the loss here AND out of the residual,
+# so they carry no gradient at all and the model may emit anything for them.
+# That is harmless - every one is overwritten from the new centre and timestamp
+# at inference - but it means their val_RMSE is meaningless in this run and
+# should not be read.
+#
+# ── 10,000 steps ─────────────────────────────────────────────────────────
+# About 50 minutes. Short: the earlier probes settled their ordering around
+# step 7,700, so 10k is just past that and no more. It answers "does the loss
+# change reverse the residual's sign" and not "by how much". If the answer is
+# yes, extend it - constant_warmup means resuming is seamless, so raising
+# max_steps and resubmitting WITHOUT FRESH=1 continues the same curve.
+#
+# ── What to compare it against ───────────────────────────────────────────
+# probe_lossexcl, which is this run minus the residual, and which reached
+# val 0.26956 at 20k. Both exclude the same eight channels from the loss, so
+# their val_loss IS comparable with each other - though not with base's, which
+# averages twenty surface channels against these twelve.
+#
+# Per variable: val_RMSE/msl, val_RMSE/vt10, val_RMSE/vr10. Those are computed
+# per channel and are unaffected by what went into the aggregate.
+
+seed_everything: 2
+
+trainer:
+  max_steps: 10000
+
+data:
+  data_spatial_shape: [13, 80, 360]
+  batch_size: 4
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  optimizer_args:
+    lr: 0.00005
+  lr_scheduler_name: constant_warmup
+  lr_scheduler_args:
+    warmup_steps: 1000
+
+  residual: true
+  residual_exclude:
+    [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos,
+     lon, lat]
+
+  loss_exclude_channels:
+    [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos]
