@@ -82,6 +82,128 @@ New since, and not contradicted:
   msl -465 Pa at +192 h, each roughly doubled by the feedback.
 - **The polar model wins on q700 and t2m** at long lead.
 
+## 11. Training probes and the radial picture (2026-09-02)
+
+### The verification was wrong twice before any of this meant anything
+
+Two corrections, in order, and every number predating them is superseded:
+
+1. **Clip to the best-track record.** The ERA5 boxes were cut along a track
+   that outlives the agency's - 202408W's ran 3.5 days past its last entry,
+   following a 1010.8 hPa remnant to 40N and the dateline. 30-45 % of scored
+   leads were in that gap and it hid a 20-28 % difference between the models.
+2. **IBTrACS, not JMA, and not ERA5.** Truncation and best-track truth now come
+   from IBTrACS, matched by position and time - the storm numbers are not
+   interchangeable, 202405W is MARIA and WP052024 is GAEMI.
+
+### The polar grid works. The polar training does not.
+
+`tools/season_radial_rmse.py` splits every field by distance from the centre.
+On an 81x81 box the ring inside 100 km is 45 cells of 6,561, so every domain
+average in this project had been drowning the one statistic that tests the
+formulation.
+
+**At +24 h the inner core is ahead on six of ten variables** - u10 by 7.8 %,
+t2m 6.3 %, q700 5.7 %, tp 5.1 %. **By +120 h it is behind on all ten**, msl by
+54.8 % inside 100 km against 10.2 % beyond 600, and the inner-ring msl penalty
+runs +0.9, +8.3, +20.3, +40.3, +54.7 % at 24 to 120 h. Monotonic from level,
+which rules the grid out: a singularity at r = 0 would be there at +24 h and
+constant. This accumulates.
+
+The signed bias confirms it is core-centred rather than a whole-field offset -
+the shapes are distinguishable and were checked on synthetic fields:
+
+```
+msl bias @120h [Pa]   0-100   100-300  300-600  600-1110
+cart_1way             -230     -169     -106     -67       falls 3.5x
+polar_1way           -1213     -768     -337     -107      falls 11x
+z500  cart            -221     -190     -170     -197      FLAT: whole field
+z500  polar           -859     -590     -345     -172      falls 5x
+```
+
+At the core the polar vortex is **deeper, warmer and moister** than truth
+(msl -12 hPa, t850 +0.84 K, t2m +1.05 K, tcwv +4.7 kg/m2) where the Cartesian
+is uniformly cold and dry. That is over-intensification, not an offset.
+
+### Which truth: the two intensity results are both right
+
+They disagreed because they use different truths, and the model sits between
+them:
+
+```
+TY samples, core, +120 h      vs ERA5        vs IBTrACS
+cart_1way                     -1.7 hPa        +23.9 hPa
+polar_1way                    -9.3 hPa        +13.8 hPa
+```
+
+IBTrACS minus ERA5 is 23-25 hPa for typhoons, which is the paper's +40 hPa
+cause - ERA5 cannot resolve an eyewall at 0.25 deg. **Both models are deeper
+than ERA5 and shallower than reality, and the polar model's extra 7.6 hPa moves
+it toward IBTrACS and away from its own training target.**
+
+It helps typhoons and hurts everything weaker: against IBTrACS, polar is
+**closer** for TY (+13.8 against +23.9) and **further** for TD (-19.2 against
+-6.5) and TS (-13.5 against -3.9). One near-uniform 11 hPa shift, two opposite
+consequences.
+
+Error decomposition, TY core at +120 h: polar RMSE 1455 with bias -929, so
+**41 % of its MSE is systematic**; Cartesian is 948 with bias -165, **3 %**.
+The systematic part is the part a loss change can reach.
+
+### Two-way: the mechanism is still unknown
+
+The harm is in the **outer** rings, not the inner - msl +0.4 % inside 100 km
+against +9.7 % beyond 600, rising to +41 % at +192 h. The earlier explanation
+("it writes the bad core into FCNV2") is refuted by that. The feedback writes
+outward inside 7.5 deg and FCNV2 writes back outside 8 deg, so the damage sits
+where FCNV2 supplies LLAT. u10, tp and w500 are *better* with two-way.
+**Untested**: dump the FCNV2 global field either side of the write-back.
+
+Asymmetry is separately refuted (section 6).
+
+### Training probes, 20k steps, constant LR, one variable each
+
+First round ran at lr 4e-4 and all three diverged - config.yaml's value, which
+no production run has ever used. 5e-5 everywhere; see section 10.
+
+| probe | change | result |
+|---|---|---|
+| **`lossexcl`** | **8 prescribed channels out of the loss** | **won: vt10 -10.2 %, vr10 -8.5 %, msl -6.1 %, tp -6.0 %, tcwv -5.7 %, t2m -4.7 %; upper air level** |
+| `residual_all` | residual, 10 channels excluded | lost on almost everything |
+| `patch226` | patch_r 0.5 -> 0.25 deg | -0.84 % |
+| `r160` | patch_r 0.126 deg | -1.66 %, 81 % slower |
+| `lossexcl_patch` | lossexcl + patch + wide windows | lost to lossexcl by 1.6 %, 31 % slower |
+
+**The geometry line is closed.** Three attempts, all negative, and the last one
+had the receptive-field confound removed - windows widened 10 to 20 so a window
+still spans 5.06 deg. No excuses left.
+
+**loss_exclude is the first real win** and it costs nothing: the eight channels
+are recomputed from the new centre and timestamp at every inference step, so
+their predictions were never used. 44 % of the surface loss was being spent on
+discarded outputs. Both the Cartesian and the polar model do this, so it is
+inherited rather than a polar regression.
+
+### Why the residual failed - not the reason expected
+
+`tools/residual_scale.py`: sigma(3 h change) / sigma(field), which is the
+standardised size of what a residual asks the network to emit. **Nothing is
+below 0.1** - msl 0.51, u10 0.61, v10 0.63, t2m 0.39, tcwv 0.31, sst 0.13 at
+the tightest (6-hourly boxes; the 3-hourly training data will read lower).
+**"The residual target is too small to learn" is refuted.** The failure needs
+another explanation, and `curve_table --ratio grad_2.0` against base is the
+next place to look.
+
+### Persistence
+
+Model 101.8 km at one 3 h step against persistence's 68.4 km - the model
+**loses** to "the storm does not move" at a single step. Read the tool's own
+caveats: val_RMSE is a field RMSE while persistence's field and centre errors
+are the same number, and one step is not a forecast. It is still a number worth
+carrying.
+
+---
+
 ## 4. The paper, read (LLAT_paper.pdf, JAS-D-26-0056)
 
 Facts that correct earlier assumptions in this project:
@@ -233,6 +355,19 @@ All three items from 08-23 are now closed:
   beside the median is the number a median hides most.
 
 ## 9. Roadmap, in priority order  (revised 2026-08-30)
+
+### P0 - extend probe_lossexcl to 105k (~8 h) - DO THIS FIRST
+
+The only change that has won anything, and it is free. At 20k it beat base on
+every surface variable while leaving the upper air alone. 20k is 4.8 % of a
+production run, so the result needs a length that can be set beside
+t360_r80's 0.22766 at 105k. Then rerun season_radial_rmse on it: the test is
+whether the inner ring at +120 h moves back toward what it looks like at
++24 h.
+
+Its val_loss is NOT comparable with base's - it averages twelve surface
+channels against base's twenty, and the eight dropped are the easy ones. Use
+val_RMSE per variable.
 
 ### P1 - L1 to weighted MSE, 105k steps (~7.5 h)
 
