@@ -46,9 +46,11 @@ _spec.loader.exec_module(tvg)
 
 
 def main(args):
+    args.tag = args.tag.strip()
     runs = []
     for spec in args.run:
         label, _, path = spec.partition("=")
+        label, path = label.strip(), path.strip()
         runs.append((label or os.path.basename(spec.rstrip("/")),
                      os.path.expanduser(path or spec)))
 
@@ -61,6 +63,46 @@ def main(args):
         for t in hit:
             ks = sorted(merged[t])
             print(f"  {t:<40} {len(ks):>6} points, steps {ks[0]}..{ks[-1]}")
+        return
+
+    if args.ratio is not None:
+        if len(runs) < 2:
+            raise SystemExit("--ratio needs at least two --run")
+        cur = {l: tvg.curves(p)[0] for l, p in runs}
+        base = runs[0][0]
+        tags = sorted(t for t in cur[base] if args.ratio in t)
+        if not tags:
+            raise SystemExit(f"no tag contains {args.ratio!r}")
+        rows = []
+        for t in tags:
+            vals = {}
+            for l, _ in runs:
+                d = cur[l].get(t)
+                if not d:
+                    break
+                ks = sorted(d)
+                tail = ks[int(len(ks) * (1 - args.tail)):]
+                vals[l] = sum(d[k] for k in tail) / len(tail)
+            if len(vals) == len(runs) and vals[base]:
+                rows.append((vals[runs[1][0]] / vals[base], t, vals))
+        rows.sort()
+        print(f"mean over the last {100*args.tail:.0f} % of steps, "
+              f"{runs[1][0]} / {base}, {len(rows)} tags matching "
+              f"{args.ratio!r}")
+        print(f"{'ratio':>8}  {'tag':<44}" +
+              "".join(f"{l:>12}" for l, _ in runs))
+        print("-" * (54 + 12 * len(runs)))
+        for r, t, vals in rows:
+            print(f"{r:>8.3f}  {t.replace('grad_2.0_norm/', ''):<44}"
+                  + "".join(f"{vals[l]:>12.4g}" for l, _ in runs))
+        rs = [r for r, _, _ in rows]
+        import statistics as st
+        print()
+        print(f"  median ratio {st.median(rs):.3f} over {len(rs)} tags; "
+              f"{sum(1 for r in rs if r < 1)} of them below 1.")
+        print("  A ratio well under 1 everywhere means the second run is being")
+        print("  asked to change less - which is what a residual connection")
+        print("  does when the identity map is already close to the answer.")
         return
 
     series = {}
@@ -163,6 +205,15 @@ if __name__ == "__main__":
                         "logged here, most per variable and level, so guessing "
                         "a name costs a round trip: --list grad_2.0 or "
                         "--list val_RMSE shows what is actually there")
+    p.add_argument("--ratio", default=None, metavar="SUBSTRING",
+                   help="compare every tag containing SUBSTRING between the "
+                        "first two runs, as a mean over the tail of training, "
+                        "sorted by ratio. 191 per-layer gradient norms are "
+                        "logged and reading them one at a time is hopeless; "
+                        "this answers 'are this run's gradients smaller "
+                        "everywhere' in one line")
+    p.add_argument("--tail", type=float, default=0.25,
+                   help="fraction of the run --ratio averages over")
     p.add_argument("--tag", default="val_loss",
                    help="any logged tag: val_loss, train_loss_epoch, "
                         "gradient_2norm, or a per-layer grad norm")
