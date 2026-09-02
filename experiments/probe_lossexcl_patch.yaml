@@ -1,0 +1,64 @@
+# The loss exclusion, plus the finer patch and the widened windows. No residual.
+#
+#   sbatch --export=ALL,SAVE_TOP_K=3,FRESH=1,RUNDIR=runs/probe_lossexcl_patch,\
+#          OVERLAY=experiments/probe_lossexcl_patch.yaml job_scripts/train_h200.sh
+#
+# ── Why this run exists ──────────────────────────────────────────────────
+# probe_lossexcl was the clear winner of the first four: at 20,000 steps it
+# beat base on every surface variable - vt10 by 10.2 %, vr10 by 8.5 %, msl by
+# 6.1 %, tp by 6.0 %, tcwv by 5.7 %, t2m by 4.7 % - while the upper air, which
+# nothing in that run touched, stayed level. That is the predicted mechanism
+# working: 44 % of the surface loss had been going to eight channels whose
+# predictions are overwritten at every inference step, and removing them puts
+# the whole surface gradient on the twelve that survive.
+#
+# probe_combo had that change and three others, and came out behind
+# probe_lossexcl on everything. The residual, tested on its own in
+# probe_residual_all, is negative on almost every surface variable, so it
+# accounts for at least part of that - but combo cannot separate the residual
+# from the geometry, and the geometry has never been tested on top of a loss
+# that is not spending half itself on discarded channels.
+#
+# So: probe_lossexcl plus the patch and windows, and nothing else. Against
+# probe_lossexcl this is one variable.
+#
+#   patch_r      0.506 -> 0.253 deg (one ERA5 cell), radial tokens 20 -> 40
+#   windows      10 -> 20 and 5 -> 10, holding the receptive field at 5.06 deg
+#                rather than letting it halve with the patch
+#
+# ── Reading it ───────────────────────────────────────────────────────────
+# Not by val_loss. probe_lossexcl's val_loss is a mean over twelve surface
+# channels and base's is over twenty, and the eight that were dropped are the
+# easy ones, so removing them RAISES the mean - lossexcl reads 0.26956 against
+# base's 0.25884 while being better on every variable that matters. The two
+# numbers measure different things.
+#
+# Compare val_RMSE/<var> instead. Those are per channel and so unaffected by
+# what went into the aggregate. msl, vt10 and vr10 are the ones to read; the
+# upper-air tags are val_RMSE/vt_850 and val_RMSE/vr_850, not u_850 - the
+# internal names are vt/vr throughout (Invariant 2).
+
+seed_everything: 2
+
+trainer:
+  max_steps: 20000
+
+data:
+  data_spatial_shape: [13, 80, 360]
+  batch_size: 4
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  residual: false
+  optimizer_args:
+    lr: 0.00005
+  lr_scheduler_name: constant_warmup
+  lr_scheduler_args:
+    warmup_steps: 1000
+
+  patch_shape: [2, 2, 6]
+  window_shape1: [2, 20, 15]
+  window_shape2: [2, 10, 30]
+
+  loss_exclude_channels:
+    [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos]
