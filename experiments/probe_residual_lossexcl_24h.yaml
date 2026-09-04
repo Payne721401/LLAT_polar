@@ -1,0 +1,63 @@
+# probe_residual_lossexcl, run for a full GB200 r1 segment instead of 10,000
+# steps.
+#
+#   sbatch --export=ALL,SAVE_TOP_K=5,FRESH=1,\
+#          RUNDIR=/work/$USER/LLAT_polar_runs/residual_lossexcl_24h,\
+#          OVERLAY=experiments/probe_residual_lossexcl_24h.yaml job_scripts/train_gb200.sh
+#
+# The pair of probe_lossexcl_24h.yaml: same everything, plus residual: true and
+# residual_exclude. Submit both together - QOS p_gb200_r1 allows exactly two
+# jobs per user, so this pair is the whole allowance and there is no room for a
+# chained follow-up until one of them ends.
+#
+# ── The question, at length this time ───────────────────────────────────
+# probe_residual_all lost to base; probe_lossexcl beat it. The 10,000-step
+# version of this run asked whether the loss change reverses the residual's
+# sign, and 10,000 was chosen because the earlier probes settled their ordering
+# near step 7,700. An ordering that holds at 7,700 need not hold at 300,000 -
+# a residual connection makes persistence the model's floor, which is the kind
+# of change whose benefit is largest early and can be overtaken later. That is
+# what the long run measures and the short one cannot.
+#
+# ── Read the per-variable RMSE, not the aggregate, against base ─────────
+# The eight prescribed channels are out of both the loss and the residual, so
+# they carry no gradient at all and the model may emit anything for them.
+# Harmless - every one is overwritten from the new centre and timestamp at
+# inference - but their val_RMSE is meaningless here. val_loss IS comparable
+# with probe_lossexcl_24h, which excludes the same eight, and is NOT comparable
+# with base, which averages twenty surface channels against these twelve.
+#
+# ── FRESH, and what the run is for ──────────────────────────────────────
+# Both points from probe_lossexcl_24h.yaml apply unchanged: FRESH because
+# continuing the H200 checkpoints would put a hardware discontinuity in the
+# middle of the curve, and constant LR means neither run produces a deployable
+# model. The winner earns an annealed production run afterwards.
+
+seed_everything: 2
+
+trainer:
+  max_steps: 500000
+  max_time: "00:23:00:00"
+
+data:
+  data_spatial_shape: [13, 80, 360]
+  batch_size: 4
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  optimizer_args:
+    lr: 0.00005
+  lr_scheduler_name: constant_warmup
+  lr_scheduler_args:
+    warmup_steps: 1000
+
+  residual: true
+  residual_exclude:
+    [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos,
+     lon, lat]
+
+  loss_exclude_channels:
+    [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos]

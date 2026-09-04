@@ -1,0 +1,63 @@
+# probe_lossexcl, run for a full GB200 r1 segment instead of 20,000 steps.
+#
+#   sbatch --export=ALL,SAVE_TOP_K=5,FRESH=1,\
+#          RUNDIR=/work/$USER/LLAT_polar_runs/lossexcl_24h,\
+#          OVERLAY=experiments/probe_lossexcl_24h.yaml job_scripts/train_gb200.sh
+#
+# Identical to probe_lossexcl in every model and data setting; only the
+# stopping rule changes. Pairs with probe_residual_lossexcl_24h.yaml, which is
+# this plus the residual, and the two are submitted together so they see the
+# same machine and the same queue.
+#
+# ── FRESH, not a resume of the H200 run ─────────────────────────────────
+# runs/probe_lossexcl already holds 20,000 steps, and constant_warmup would let
+# them be continued. They are not, because the continuation would run under a
+# different GPU architecture, a different PyTorch (2.12.1 against 2.5.1) and a
+# different cuDNN, and the curve would carry a discontinuity at step 20,000
+# that belongs to the hardware rather than the experiment. probe_base.yaml
+# lists what must not differ between probes; the machine was not on that list
+# because until now there was only one. Redoing 20,000 steps costs about 90
+# minutes of a 24-hour segment, which is cheaper than an unexplainable kink.
+#
+# The H200 number stays as a reference point, not as a shared curve:
+# probe_lossexcl reached val 0.26956 at 20k.
+#
+# ── max_time is the stopping rule, max_steps is a cap that is not reached ─
+# The learning rate is constant after warmup, so max_steps carries no schedule
+# and stopping early costs nothing - that is the whole reason these probes do
+# not anneal. max_time lets Lightning finish the step, write a checkpoint and
+# exit cleanly at 23 h, inside the partition's 24 h, instead of being killed
+# mid-write by Slurm. 500,000 is a cap chosen so it is never the binding one:
+# r80 geometry measured 14,000 steps/h on 8 H200s and GB200 is at per-GPU
+# parity, so 23 h is roughly 300,000.
+#
+# ── What this does and does not produce ─────────────────────────────────
+# Not a deployable model. Constant LR means it never anneals, so its
+# checkpoints are for comparing the two probes against each other and nothing
+# else. Whichever wins earns a production run on a cosine or WSD schedule; that
+# run is where max_steps matters again.
+
+seed_everything: 2
+
+trainer:
+  max_steps: 500000
+  max_time: "00:23:00:00"
+
+data:
+  data_spatial_shape: [13, 80, 360]
+  batch_size: 4
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  residual: false
+  optimizer_args:
+    lr: 0.00005
+  lr_scheduler_name: constant_warmup
+  lr_scheduler_args:
+    warmup_steps: 1000
+
+  loss_exclude_channels:
+    [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos]
