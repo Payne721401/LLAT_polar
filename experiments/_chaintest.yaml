@@ -1,0 +1,64 @@
+# Throwaway. Exercises the kill-and-resume path of job_scripts/train_gb200.sh
+# in five minutes rather than four hours. Not a model, not a measurement.
+#
+#   sbatch -p gb200-dev -N1 --ntasks-per-node=2 --gpus-per-node=2 -t 00:05:00 \
+#     --export=ALL,SAVE_TOP_K=1,FRESH=1,CHAIN=1,CHAIN_LEFT=2,RUNDIR=runs/_chaintest,OVERLAY=experiments/_chaintest.yaml \
+#     job_scripts/train_gb200.sh
+#
+#   rm -rf runs/_chaintest        # afterwards
+#
+# ── What is being tested, and what already is not ───────────────────────
+# Resuming works: job 335083 restored version_334723's checkpoint and reported
+# step 23,465 correctly. It then died to a cumulative max_time, which is gone.
+#
+# What has never been exercised is the resume after a SIGKILL. Every segment
+# now ends by being killed at the wall rather than stopping itself, so the
+# question is whether last.ckpt is intact when the process dies without
+# warning - and a code path nothing has run is not a working code path.
+#
+# ── Why the settings ────────────────────────────────────────────────────
+# limit_train_batches makes an epoch twenty steps, so a checkpoint lands within
+# seconds of training starting. At the real settings an epoch is 14,522/32 =
+# 454 steps and at these two GPUs it would be 3,630 - twenty minutes, longer
+# than the whole test, and the second segment would find nothing to resume.
+#
+# max_steps is large so that Slurm's wall is what stops the segment. A run that
+# finishes on its own tests the opposite of what is wanted here.
+#
+# Five minutes rather than three: start-up is about a minute of it - torch
+# import, DDP across the ranks, the dataset scan - and three would leave too
+# little training for a checkpoint to be certain.
+#
+# gb200-dev because its QOS counters are separate from r1's, so this can run
+# alongside the real chain without spending its two-job allowance. Note dev
+# allows the whole ACCOUNT two GPUs, so a labmate using it will block this.
+
+seed_everything: 2
+
+trainer:
+  max_steps: 100000
+  limit_train_batches: 20
+  limit_val_batches: 2
+  num_sanity_val_steps: 0
+
+data:
+  data_spatial_shape: [13, 80, 360]
+  batch_size: 2
+  n_workers: 4
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  residual: true
+  residual_exclude:
+    [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos,
+     lon, lat]
+  loss_exclude_channels:
+    [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos]
+  optimizer_args:
+    lr: 0.00005
+  lr_scheduler_name: constant_warmup
+  lr_scheduler_args:
+    warmup_steps: 100
