@@ -156,41 +156,42 @@ if [ "${CHAIN:-0}" = "1" ]; then
     # about eleven to reach 300,000, and a hop that gets requeued or dies early
     # still costs one.
     CHAIN_LEFT="${CHAIN_LEFT:-24}"
-    # train.py's ModelCheckpoint filename ends in -s<step> and last.ckpt is a
-    # symlink to it, so the step reads out of the name without loading 305 MB
-    # of tensors.
-    STEP=0
-    if [ "${FRESH:-0}" != "1" ] && [ -n "$CKPT" ]; then
-        STEP=$(basename "$(readlink -f "$CKPT")" .ckpt | sed -n 's/.*-s\([0-9]\{1,\}\)$/\1/p')
-        STEP="${STEP:-0}"
-    fi
-    TARGET=$(python - "${OVERLAY:-}" <<'PY'
-import sys, yaml
-target = 0
-for f in ["config.yaml"] + [a for a in sys.argv[1:] if a]:
-    with open(f, encoding="utf-8") as fh:
-        d = yaml.safe_load(fh) or {}
-    v = (d.get("trainer") or {}).get("max_steps")
-    if v is not None:
-        target = v
-print(target)
-PY
-)
+    # tools/chain_state.py rather than inline scraping, so tests/ can reach the
+    # two regexes that decide whether this chain stops. It prints "<step>
+    # <target>", using -1 for either one it cannot determine.
+    CS_ARGS=(--rundir "$RUNDIR" --config config.yaml)
+    if [ -n "${OVERLAY:-}" ]; then CS_ARGS+=(--overlay "$OVERLAY"); fi
+    if [ "${FRESH:-0}" = "1" ]; then CS_ARGS+=(--fresh); fi
+    read -r STEP TARGET <<< "$(python tools/chain_state.py "${CS_ARGS[@]}")"
+
     echo ">>> chain: at step $STEP of $TARGET, $CHAIN_LEFT hops left"
-    if [ "$CHAIN_LEFT" -gt 0 ] && [ "$STEP" -lt "$TARGET" ]; then
+    if [ "$TARGET" -lt 0 ]; then
+        # Chaining toward a target nothing defines would never stop.
+        echo ">>> chain ends here: no max_steps in config or overlay"
+    elif [ "$CHAIN_LEFT" -le 0 ]; then
+        echo ">>> chain ends here: out of hops"
+    elif [ "$STEP" -ge "$TARGET" ]; then
+        echo ">>> chain ends here: target reached"
+    else
+        # An unknown step (-1) still chains; the hop counter bounds it.
+        # Partition and the per-node counts are propagated as well as the node
+        # count: without them a chain started with overrides on the sbatch line
+        # would resubmit itself against the #SBATCH defaults, which on r1 means
+        # four GPUs against a MinTRES of sixteen - rejected, chain broken.
         TLIMIT=$(squeue -h -j "$SLURM_JOB_ID" -o "%l" | tr -d ' ')
         if NEXT=$(sbatch --parsable \
                     --dependency=afterany:"$SLURM_JOB_ID" \
+                    --partition="$SLURM_JOB_PARTITION" \
                     --nodes="$SLURM_JOB_NUM_NODES" \
+                    --ntasks-per-node="$SLURM_NTASKS_PER_NODE" \
+                    --gpus-per-node="$SLURM_NTASKS_PER_NODE" \
                     --time="$TLIMIT" \
                     --export=ALL,FRESH=0,CHAIN=1,CHAIN_LEFT=$((CHAIN_LEFT - 1)) \
                     job_scripts/train_gb200.sh 2>&1); then
-            echo ">>> chained next segment: job $NEXT (-t $TLIMIT)"
+            echo ">>> chained next segment: job $NEXT ($SLURM_JOB_PARTITION, -t $TLIMIT)"
         else
             echo "!!! chain submit failed, this segment still runs: $NEXT"
         fi
-    else
-        echo ">>> chain ends here"
     fi
 fi
 
