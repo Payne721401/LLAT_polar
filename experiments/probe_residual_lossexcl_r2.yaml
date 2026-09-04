@@ -1,0 +1,65 @@
+# probe_residual_lossexcl on gb200-r2. Identical to the _24h file except for
+# batch_size, which the partition dictates.
+#
+#   sbatch -p gb200-r2 -N8 -t 11:55:00 \
+#     --export=ALL,SAVE_TOP_K=1,CHAIN=1,RUNDIR=runs/residual_lossexcl_24h,OVERLAY=experiments/probe_residual_lossexcl_r2.yaml \
+#     job_scripts/train_gb200.sh
+#
+# ── Why r2, and why batch_size 1 ────────────────────────────────────────
+# QOS p_gb200_r2 sets MinTRES gres/gpu=32, so the smallest legal job is eight
+# nodes and thirty-two GPUs - four times r1's minimum. batch_size is per device,
+# so 1 is what holds the effective batch at the 32 every other run in this
+# project used. Anything larger is a different experiment.
+#
+# One per device sounds wasteful and is not, for this model: sixteen GPUs
+# measured 1.04x against eight, so per-step time is dominated by kernel launch
+# rather than by arithmetic and barely moves with the per-device batch. What is
+# genuinely unmeasured here is the all-reduce across eight nodes; two nodes cost
+# almost nothing, eight may cost more. The first segment's steps/hour answers it.
+#
+# r2 rather than r1 because of where the queue puts us rather than what the
+# hardware does. On r1 this account's priority sits twelfth behind about 1,140
+# node-hours; on r2 the same priority ranks third behind roughly 240. Three days
+# against overnight, for a partition difference and one line of config.
+#
+# ── This continues runs/residual_lossexcl_24h; it does not restart it ───
+# The first 23,465 steps ran on r1 at sixteen ranks and batch 2. Resuming here
+# at thirty-two ranks and batch 1 keeps the effective batch, the data, the model
+# and the schedule identical, but changes which samples share a step - a
+# shuffle-level perturbation at 8 per cent of the run. Recorded because it is
+# the kind of thing that is invisible later: if this curve ever shows a kink
+# near step 23,465, that is where it came from.
+#
+# Do not pass FRESH. And cancel the r1 job before submitting this one - two
+# chains resuming from each other's checkpoints in one RUNDIR is not a race
+# either of them loses cleanly.
+
+seed_everything: 2
+
+trainer:
+  # Identical to probe_lossexcl_24h.yaml, which is the control. Changing one
+  # without the other turns a comparison into two runs of different lengths.
+  max_steps: 300000
+
+data:
+  data_spatial_shape: [13, 80, 360]
+  batch_size: 1
+
+model:
+  data_spatial_shape: [13, 80, 360]
+  patch_shape: [2, 4, 6]
+  window_shape1: [2, 10, 15]
+  window_shape2: [2, 5, 30]
+  optimizer_args:
+    lr: 0.00005
+  lr_scheduler_name: constant_warmup
+  lr_scheduler_args:
+    warmup_steps: 1000
+
+  residual: true
+  residual_exclude:
+    [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos,
+     lon, lat]
+
+  loss_exclude_channels:
+    [f, solar, hgt, landmask, diurnal_sin, diurnal_cos, doy_sin, doy_cos]
