@@ -123,39 +123,21 @@ if [ -n "${OVERLAY:-}" ]; then
     OVERLAY_ARGS=(--config "$OVERLAY")
 fi
 
-# ---- Stop GRACE seconds before Slurm does ---------------------------------
-# max_time is derived from the allocation rather than written in the overlay,
-# so changing -t on the sbatch line is the only edit a different segment length
-# needs.
+# ---- No max_time. Do not add one. -----------------------------------------
+# Lightning's max_time is backed by a Timer callback whose elapsed time is
+# saved in the checkpoint and restored on resume, so it is CUMULATIVE over a
+# chained run rather than per segment. An earlier version of this script set it
+# from the allocation, and the second segment stopped twenty-seven seconds in
+# with "Time limit reached. Elapsed time is 1:55:10" - the first segment's
+# duration, restored. Every later hop did the same, so the chain spent itself
+# on twenty-seven-second jobs. There is no flag to make the Timer per-segment.
 #
-# What the margin protects is the checkpoint, not the progress. A checkpoint is
-# written every epoch - 455 steps, under two minutes - so a hard kill costs at
-# most that. What it cannot survive is being killed PART WAY THROUGH a write:
-# Slurm sends SIGTERM at the wall and SIGKILL shortly after, and 305 MB landing
-# on a busy shared filesystem is not instantaneous. save_last is a symlink to
-# the newest real checkpoint, so a truncated write leaves last.ckpt pointing at
-# a corrupt file and the next segment fails to resume. That is what GRACE buys.
-# (Recovery, if it ever happens: SAVE_TOP_K keeps several, so point --ckpt_path
-# at the second newest by hand.)
-#
-# 600 is deliberately generous - it has to cover finishing the batch, a
-# validation pass if one is due, the write itself, and DDP teardown across four
-# nodes. On a two-hour segment that is 8 per cent of the allocation, so lower
-# it: GRACE=300 is comfortable and below about 120 the write is a gamble.
-GRACE="${GRACE:-600}"
-TIME_ARGS=()
-if [ -n "${SLURM_JOB_END_TIME:-}" ]; then
-    SECS=$(( SLURM_JOB_END_TIME - $(date +%s) - GRACE ))
-    if [ "$SECS" -gt 60 ]; then
-        MT=$(printf '00:%02d:%02d:%02d' $((SECS/3600)) $((SECS%3600/60)) $((SECS%60)))
-        TIME_ARGS=(--trainer.max_time "$MT")
-        echo ">>> max_time $MT (grace ${GRACE}s; allocation ends $(date -d "@$SLURM_JOB_END_TIME" '+%F %T'))"
-    else
-        echo "!!! GRACE=${GRACE}s leaves under a minute of the allocation; running without max_time"
-    fi
-else
-    echo ">>> SLURM_JOB_END_TIME unset; no max_time, the segment will be killed at the wall"
-fi
+# Slurm's wall clock is the stopping rule instead, and what would have been
+# lost to it is already bounded: ModelCheckpoint writes every epoch, which at
+# 454 steps is under two minutes. The remaining exposure is a SIGKILL landing
+# part way through a 305 MB write, leaving last.ckpt symlinked to a truncated
+# file - rare, and recoverable by pointing --ckpt_path at the second newest of
+# the SAVE_TOP_K checkpoints by hand.
 
 # ---- Optional self-chaining ----------------------------------------------
 # CHAIN=1 submits the next segment NOW, before training starts, with a
@@ -170,7 +152,10 @@ fi
 # the run is finished; the hop counter ends it if the step check ever fails to
 # parse, which would otherwise resubmit forever.
 if [ "${CHAIN:-0}" = "1" ]; then
-    CHAIN_LEFT="${CHAIN_LEFT:-12}"
+    # 24 rather than 12: two-hour segments at roughly 28,000 steps each need
+    # about eleven to reach 300,000, and a hop that gets requeued or dies early
+    # still costs one.
+    CHAIN_LEFT="${CHAIN_LEFT:-24}"
     # train.py's ModelCheckpoint filename ends in -s<step> and last.ckpt is a
     # symlink to it, so the step reads out of the name without loading 305 MB
     # of tensors.
@@ -217,7 +202,6 @@ srun -n "$SLURM_NTASKS" python train.py fit \
      --config config.yaml "${OVERLAY_ARGS[@]}" \
      --trainer.num_nodes "$SLURM_JOB_NUM_NODES" \
      --trainer.devices "$SLURM_NTASKS_PER_NODE" \
-     "${TIME_ARGS[@]}" \
      --trainer.default_root_dir "$RUNDIR" "${EXTRA[@]}"
 
 echo "=========================================="
