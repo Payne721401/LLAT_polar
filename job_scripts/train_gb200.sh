@@ -123,18 +123,35 @@ if [ -n "${OVERLAY:-}" ]; then
     OVERLAY_ARGS=(--config "$OVERLAY")
 fi
 
-# ---- Stop ten minutes before Slurm does -----------------------------------
-# Derived from the allocation rather than written in the overlay, so changing
-# -t on the sbatch line is the only edit a different segment length needs.
-# Without it the segment is killed mid-epoch and loses whatever has run since
-# the last checkpoint - under two minutes at 455 steps an epoch, but for free.
+# ---- Stop GRACE seconds before Slurm does ---------------------------------
+# max_time is derived from the allocation rather than written in the overlay,
+# so changing -t on the sbatch line is the only edit a different segment length
+# needs.
+#
+# What the margin protects is the checkpoint, not the progress. A checkpoint is
+# written every epoch - 455 steps, under two minutes - so a hard kill costs at
+# most that. What it cannot survive is being killed PART WAY THROUGH a write:
+# Slurm sends SIGTERM at the wall and SIGKILL shortly after, and 305 MB landing
+# on a busy shared filesystem is not instantaneous. save_last is a symlink to
+# the newest real checkpoint, so a truncated write leaves last.ckpt pointing at
+# a corrupt file and the next segment fails to resume. That is what GRACE buys.
+# (Recovery, if it ever happens: SAVE_TOP_K keeps several, so point --ckpt_path
+# at the second newest by hand.)
+#
+# 600 is deliberately generous - it has to cover finishing the batch, a
+# validation pass if one is due, the write itself, and DDP teardown across four
+# nodes. On a two-hour segment that is 8 per cent of the allocation, so lower
+# it: GRACE=300 is comfortable and below about 120 the write is a gamble.
+GRACE="${GRACE:-600}"
 TIME_ARGS=()
 if [ -n "${SLURM_JOB_END_TIME:-}" ]; then
-    SECS=$(( SLURM_JOB_END_TIME - $(date +%s) - 600 ))
-    if [ "$SECS" -gt 300 ]; then
+    SECS=$(( SLURM_JOB_END_TIME - $(date +%s) - GRACE ))
+    if [ "$SECS" -gt 60 ]; then
         MT=$(printf '00:%02d:%02d:%02d' $((SECS/3600)) $((SECS%3600/60)) $((SECS%60)))
         TIME_ARGS=(--trainer.max_time "$MT")
-        echo ">>> max_time $MT (allocation ends $(date -d "@$SLURM_JOB_END_TIME" '+%F %T'))"
+        echo ">>> max_time $MT (grace ${GRACE}s; allocation ends $(date -d "@$SLURM_JOB_END_TIME" '+%F %T'))"
+    else
+        echo "!!! GRACE=${GRACE}s leaves under a minute of the allocation; running without max_time"
     fi
 else
     echo ">>> SLURM_JOB_END_TIME unset; no max_time, the segment will be killed at the wall"
