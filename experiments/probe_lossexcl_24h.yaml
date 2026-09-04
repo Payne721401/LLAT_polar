@@ -22,14 +22,23 @@
 # The H200 number stays as a reference point, not as a shared curve:
 # probe_lossexcl reached val 0.26956 at 20k.
 #
-# ── max_time is the stopping rule, max_steps is a cap that is not reached ─
-# The learning rate is constant after warmup, so max_steps carries no schedule
-# and stopping early costs nothing - that is the whole reason these probes do
-# not anneal. max_time lets Lightning finish the step, write a checkpoint and
-# exit cleanly at 23 h, inside the partition's 24 h, instead of being killed
-# mid-write by Slurm. 500,000 is a cap chosen so it is never the binding one:
-# r80 geometry measured 14,000 steps/h on 8 H200s and GB200 is at per-GPU
-# parity, so 23 h is roughly 300,000.
+# ── max_steps decides the comparison; max_time only decides the segment ──
+# Both are set and Lightning stops at whichever comes first, and they do
+# different jobs. max_steps is the shared finish line: this run and its pair
+# must end on the same step or their validation losses are not comparable, and
+# a wall-clock limit alone would stop them at different ones - node speed and
+# the residual's small extra cost are enough to separate them. max_time is only
+# there so a segment that runs out of the partition's 24 h finishes its step,
+# writes a checkpoint and exits, instead of being killed mid-write by Slurm.
+#
+# max_steps is absolute, not an increment: Lightning restores global_step from
+# the checkpoint, so resubmitting WITHOUT FRESH continues toward the same
+# 300,000 however many segments it takes. The learning rate is constant after
+# warmup, so those segments join seamlessly and stopping early costs nothing.
+#
+# 300,000 because r80 geometry measured 14,000 steps/h on eight H200s and GB200
+# is at per-GPU parity, which puts 23 h near 322,000 - about 7 per cent of
+# headroom, so one segment probably finishes it and two certainly do.
 #
 # ── What this does and does not produce ─────────────────────────────────
 # Not a deployable model. Constant LR means it never anneals, so its
@@ -40,7 +49,7 @@
 seed_everything: 2
 
 trainer:
-  max_steps: 500000
+  max_steps: 300000
   max_time: "00:23:00:00"
 
 data:

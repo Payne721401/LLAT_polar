@@ -27,16 +27,20 @@
 # with probe_lossexcl_24h, which excludes the same eight, and is NOT comparable
 # with base, which averages twenty surface channels against these twelve.
 #
-# ── FRESH, and what the run is for ──────────────────────────────────────
-# Both points from probe_lossexcl_24h.yaml apply unchanged: FRESH because
+# ── FRESH, the stopping rule, and what the run is for ───────────────────
+# All three points from probe_lossexcl_24h.yaml apply unchanged, and the middle
+# one is why max_steps must stay identical to that file's. FRESH because
 # continuing the H200 checkpoints would put a hardware discontinuity in the
-# middle of the curve, and constant LR means neither run produces a deployable
-# model. The winner earns an annealed production run afterwards.
+# middle of the curve; max_steps is the shared finish line and max_time only
+# ends a segment cleanly; and constant LR means neither run produces a
+# deployable model. The winner earns an annealed production run afterwards.
 
 seed_everything: 2
 
 trainer:
-  max_steps: 500000
+  # Identical to probe_lossexcl_24h.yaml. Changing one without the other turns
+  # a controlled comparison into two runs of different lengths.
+  max_steps: 300000
   max_time: "00:23:00:00"
 
 data:
