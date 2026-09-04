@@ -27,13 +27,14 @@
 # with probe_lossexcl_24h, which excludes the same eight, and is NOT comparable
 # with base, which averages twenty surface channels against these twelve.
 #
-# ── FRESH, the stopping rule, and what the run is for ───────────────────
-# All three points from probe_lossexcl_24h.yaml apply unchanged, and the middle
-# one is why max_steps must stay identical to that file's. FRESH because
-# continuing the H200 checkpoints would put a hardware discontinuity in the
-# middle of the curve; max_steps is the shared finish line and max_time only
-# ends a segment cleanly; and constant LR means neither run produces a
-# deployable model. The winner earns an annealed production run afterwards.
+# ── FRESH, the stopping rule, batch_size, and what the run is for ───────
+# All of it is copied from probe_lossexcl_24h.yaml and the reasoning is there.
+# In short: FRESH because continuing the H200 checkpoints would put a hardware
+# discontinuity in the middle of the curve; max_steps is the shared finish line
+# and the segment length lives on the sbatch -t flag instead of in this file;
+# batch_size 2 because QOS p_gb200_r1's MinTRES forces sixteen GPUs and 16 x 2
+# is the H200 runs' effective batch of 32; and constant LR means neither run
+# produces a deployable model. The winner earns an annealed production run.
 
 seed_everything: 2
 
@@ -41,11 +42,10 @@ trainer:
   # Identical to probe_lossexcl_24h.yaml. Changing one without the other turns
   # a controlled comparison into two runs of different lengths.
   max_steps: 300000
-  max_time: "00:23:00:00"
 
 data:
   data_spatial_shape: [13, 80, 360]
-  batch_size: 4
+  batch_size: 2
 
 model:
   data_spatial_shape: [13, 80, 360]

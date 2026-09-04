@@ -22,23 +22,30 @@
 # The H200 number stays as a reference point, not as a shared curve:
 # probe_lossexcl reached val 0.26956 at 20k.
 #
-# ── max_steps decides the comparison; max_time only decides the segment ──
-# Both are set and Lightning stops at whichever comes first, and they do
-# different jobs. max_steps is the shared finish line: this run and its pair
-# must end on the same step or their validation losses are not comparable, and
-# a wall-clock limit alone would stop them at different ones - node speed and
-# the residual's small extra cost are enough to separate them. max_time is only
-# there so a segment that runs out of the partition's 24 h finishes its step,
-# writes a checkpoint and exits, instead of being killed mid-write by Slurm.
+# ── max_steps is the finish line; the segment length is not set here ─────
+# max_steps is the only stopping rule in this file, and it is what makes the
+# comparison valid: this run and its pair must end on the same step or their
+# validation losses mean nothing next to each other. It is absolute rather than
+# an increment - Lightning restores global_step from the checkpoint - so
+# resubmitting WITHOUT FRESH continues toward the same 300,000 however many
+# segments that takes. The learning rate is constant after warmup, so the
+# segments join with no discontinuity and stopping early costs nothing.
 #
-# max_steps is absolute, not an increment: Lightning restores global_step from
-# the checkpoint, so resubmitting WITHOUT FRESH continues toward the same
-# 300,000 however many segments it takes. The learning rate is constant after
-# warmup, so those segments join seamlessly and stopping early costs nothing.
+# There is deliberately no max_time. train_gb200.sh derives one from the Slurm
+# allocation and passes it on the command line, so the segment length lives on
+# the sbatch -t flag and nowhere else. Four-hour segments are the default there
+# because a job that long can be backfilled into the gaps this queue opens and
+# a twenty-four-hour one cannot.
 #
 # 300,000 because r80 geometry measured 14,000 steps/h on eight H200s and GB200
-# is at per-GPU parity, which puts 23 h near 322,000 - about 7 per cent of
-# headroom, so one segment probably finishes it and two certainly do.
+# is at per-GPU parity - roughly 21 hours of compute, six four-hour segments.
+#
+# ── batch_size 2, not 4 ──────────────────────────────────────────────────
+# QOS p_gb200_r1 sets MinTRES gres/gpu=16, so the smallest legal job is four
+# nodes and sixteen GPUs. batch_size is per device, so 2 reproduces the H200
+# runs' effective batch of 32. Leaving it at 4 would double the effective batch
+# and halve the per-sample learning rate - a different experiment, not a faster
+# one. The same arithmetic as experiments/bench_2node.yaml.
 #
 # ── What this does and does not produce ─────────────────────────────────
 # Not a deployable model. Constant LR means it never anneals, so its
@@ -50,11 +57,10 @@ seed_everything: 2
 
 trainer:
   max_steps: 300000
-  max_time: "00:23:00:00"
 
 data:
   data_spatial_shape: [13, 80, 360]
-  batch_size: 4
+  batch_size: 2
 
 model:
   data_spatial_shape: [13, 80, 360]

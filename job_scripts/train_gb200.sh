@@ -3,25 +3,33 @@
 # LLAT polar - NCHC GB200 (aarch64) training. Companion to train_h200.sh, which
 # stays the script for the H200 cluster; the two are not interchangeable.
 #
-#   sbatch --export=ALL,SAVE_TOP_K=5,FRESH=1,RUNDIR=/work/$USER/runs/NAME,OVERLAY=experiments/NAME.yaml \
+#   sbatch --export=ALL,SAVE_TOP_K=5,FRESH=1,CHAIN=1,RUNDIR=runs/NAME,OVERLAY=experiments/NAME.yaml \
 #          job_scripts/train_gb200.sh
-#   sbatch --dependency=afterany:<JobID> --export=ALL,SAVE_TOP_K=5,RUNDIR=... job_scripts/train_gb200.sh
 #
-# Four differences from the H200 script, every one forced by the machine.
+# Five differences from the H200 script, every one forced by the machine or the
+# queue.
 #
-# 1. Four GPUs per node, not eight. Eight-way DDP is two nodes, and batch_size
-#    is per device, so the effective batch is nodes x 4 x batch_size. The H200
-#    runs are 8 x 4 = 32; 2 nodes x 4 x 4 reproduces that exactly, and one node
-#    needs batch_size 8 to match. An effective batch that does not match is a
-#    different experiment, not a faster one - max_steps defines the cosine
-#    curve and the per-sample learning rate moves with it.
+# 1. Four nodes, not one, and sixteen GPUs rather than eight. QOS p_gb200_r1
+#    sets MinTRES gres/gpu=16, so a smaller job is rejected outright with
+#    QOSMinGRES however high its priority - the reason a one-GPU job has been
+#    sitting at the top of the r2 queue going nowhere. Four GPUs per node makes
+#    sixteen GPUs exactly four nodes.
 #
-# 2. gb200-r1 allows 24 h against 8gpus' 48 h, so a run needs twice the
-#    segments. QOS p_gb200_r1 allows two jobs per user, which is exactly "one
-#    running plus one chained" - do not queue a second follow-up, it will be
-#    rejected and the chain will silently stop at the first link.
+# 2. batch_size must be 2, in the overlay. It is per device, so sixteen GPUs at
+#    2 reproduces the H200 runs' effective batch of 32. Leaving it at 4 would
+#    double the effective batch, halve the per-sample learning rate and make the
+#    run a different experiment rather than a faster one.
 #
-# 3. aarch64. The cluster's miniconda3 is an x86-64 build and cannot execute on
+# 3. Segments are short by default, four hours rather than the partition's
+#    twenty-four. Slurm's backfill scheduler will start a low-priority job early
+#    only if it finishes before the next reserved start, and no gap in this
+#    queue is a day wide - a 23:55 job therefore waits for the front of the
+#    queue and nothing else. Four hours fits the gaps that open when the
+#    scheduler is accumulating nodes for a seven- or eight-node job. Segment
+#    length costs nothing scientifically: max_steps is absolute, the learning
+#    rate is constant after warmup, and the script resumes automatically.
+#
+# 4. aarch64. The cluster's miniconda3 is an x86-64 build and cannot execute on
 #    these nodes at all ("cannot execute binary file"), and PyTorch stopped
 #    publishing conda packages after 2.5 while Blackwell needs >= 2.7. So there
 #    is no conda here: the environment is a venv built with /usr/bin/python3.11
@@ -29,19 +37,23 @@
 #    --export=ALL still drags the login node's x86 conda in, which is why the
 #    environment is stripped below before the venv is sourced.
 #
-# 4. Checkpoints go to /work. /home is 100 GB with ~45 GB free and one
-#    checkpoint is 305 MB, so a default save_top_k of 30 is 9.2 GB per run and
-#    a full quota kills the job mid-write with an error that never mentions
-#    disks. Set SAVE_TOP_K on the sbatch line.
+# 5. MaxTRESPA gres/gpu=32 is per ACCOUNT, so two four-node jobs are the whole
+#    of mst115002's r1 allowance and other members of the account compete for
+#    it. Check `squeue -A mst115002 -p gb200-r1` before assuming both halves of
+#    a comparison can run at once.
+#
+# Checkpoints: /home is 100 GB with ~45 free and one checkpoint is 305 MB, so
+# the default save_top_k of 30 is 9.2 GB per run and a full quota kills the job
+# mid-write with an error that never mentions disks. Set SAVE_TOP_K.
 # ============================================================================
 #SBATCH --account=MST115002
 #SBATCH --job-name=LLAT_gb200
 #SBATCH --partition=gb200-r1
-#SBATCH --nodes=2
+#SBATCH --nodes=4                     # 16 GPUs: the QOS minimum, see note 1
 #SBATCH --gpus-per-node=4
 #SBATCH --ntasks-per-node=4           # one task per GPU (DDP)
 #SBATCH --cpus-per-task=32            # 136 effective cores / 4 tasks, with headroom
-#SBATCH --time=23:55:00               # partition limit is 24 h
+#SBATCH --time=04:00:00               # short on purpose, see note 3; override with -t
 #SBATCH --output=job_logs/job-%j.out
 #SBATCH --error=job_logs/job-%j.err
 #SBATCH --mail-type=END,FAIL
@@ -60,7 +72,6 @@ echo "Arch    : $(uname -m)"
 
 [ "$(uname -m)" = "aarch64" ] || { echo "!!! not on an aarch64 node - wrong partition?"; exit 1; }
 
-# ---- Run directory. /work, not /home; see note 4 above. ----
 RUNDIR="${RUNDIR:-/work/$USER/LLAT_polar_runs/default}"
 mkdir -p "$RUNDIR"
 echo "RunDir  : $RUNDIR"
@@ -112,14 +123,84 @@ if [ -n "${OVERLAY:-}" ]; then
     OVERLAY_ARGS=(--config "$OVERLAY")
 fi
 
+# ---- Stop ten minutes before Slurm does -----------------------------------
+# Derived from the allocation rather than written in the overlay, so changing
+# -t on the sbatch line is the only edit a different segment length needs.
+# Without it the segment is killed mid-epoch and loses whatever has run since
+# the last checkpoint - under two minutes at 455 steps an epoch, but for free.
+TIME_ARGS=()
+if [ -n "${SLURM_JOB_END_TIME:-}" ]; then
+    SECS=$(( SLURM_JOB_END_TIME - $(date +%s) - 600 ))
+    if [ "$SECS" -gt 300 ]; then
+        MT=$(printf '00:%02d:%02d:%02d' $((SECS/3600)) $((SECS%3600/60)) $((SECS%60)))
+        TIME_ARGS=(--trainer.max_time "$MT")
+        echo ">>> max_time $MT (allocation ends $(date -d "@$SLURM_JOB_END_TIME" '+%F %T'))"
+    fi
+else
+    echo ">>> SLURM_JOB_END_TIME unset; no max_time, the segment will be killed at the wall"
+fi
+
+# ---- Optional self-chaining ----------------------------------------------
+# CHAIN=1 submits the next segment NOW, before training starts, with a
+# dependency on this job. Submitting at the start rather than at the end is the
+# whole point: a segment that reaches its wall clock is killed and nothing
+# after srun ever runs, so a chain built on the last line breaks exactly when
+# it is needed. MaxSubmitPU is 2 on both r1 and r2, which is one running plus
+# one waiting - so a chained run uses the entire allowance and only ONE
+# experiment can chain at a time.
+#
+# Two stop conditions, and it needs both. The step check ends the chain when
+# the run is finished; the hop counter ends it if the step check ever fails to
+# parse, which would otherwise resubmit forever.
+if [ "${CHAIN:-0}" = "1" ]; then
+    CHAIN_LEFT="${CHAIN_LEFT:-12}"
+    # train.py's ModelCheckpoint filename ends in -s<step> and last.ckpt is a
+    # symlink to it, so the step reads out of the name without loading 305 MB
+    # of tensors.
+    STEP=0
+    if [ "${FRESH:-0}" != "1" ] && [ -n "$CKPT" ]; then
+        STEP=$(basename "$(readlink -f "$CKPT")" .ckpt | sed -n 's/.*-s\([0-9]\{1,\}\)$/\1/p')
+        STEP="${STEP:-0}"
+    fi
+    TARGET=$(python - "${OVERLAY:-}" <<'PY'
+import sys, yaml
+target = 0
+for f in ["config.yaml"] + [a for a in sys.argv[1:] if a]:
+    with open(f, encoding="utf-8") as fh:
+        d = yaml.safe_load(fh) or {}
+    v = (d.get("trainer") or {}).get("max_steps")
+    if v is not None:
+        target = v
+print(target)
+PY
+)
+    echo ">>> chain: at step $STEP of $TARGET, $CHAIN_LEFT hops left"
+    if [ "$CHAIN_LEFT" -gt 0 ] && [ "$STEP" -lt "$TARGET" ]; then
+        TLIMIT=$(squeue -h -j "$SLURM_JOB_ID" -o "%l" | tr -d ' ')
+        if NEXT=$(sbatch --parsable \
+                    --dependency=afterany:"$SLURM_JOB_ID" \
+                    --nodes="$SLURM_JOB_NUM_NODES" \
+                    --time="$TLIMIT" \
+                    --export=ALL,FRESH=0,CHAIN=1,CHAIN_LEFT=$((CHAIN_LEFT - 1)) \
+                    job_scripts/train_gb200.sh 2>&1); then
+            echo ">>> chained next segment: job $NEXT (-t $TLIMIT)"
+        else
+            echo "!!! chain submit failed, this segment still runs: $NEXT"
+        fi
+    else
+        echo ">>> chain ends here"
+    fi
+fi
+
 # Lightning does not read the SBATCH directives; num_nodes and devices have to
 # be passed, and srun's task count comes from Slurm rather than a literal, so
-# changing --nodes above needs no second edit here.
+# changing --nodes needs no second edit here.
 echo "=========================================="
 srun -n "$SLURM_NTASKS" python train.py fit \
      --config config.yaml "${OVERLAY_ARGS[@]}" \
      --trainer.num_nodes "$SLURM_JOB_NUM_NODES" \
      --trainer.devices "$SLURM_NTASKS_PER_NODE" \
+     "${TIME_ARGS[@]}" \
      --trainer.default_root_dir "$RUNDIR" "${EXTRA[@]}"
 
 echo "=========================================="
