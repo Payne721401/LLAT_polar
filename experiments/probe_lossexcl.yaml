@@ -41,7 +41,13 @@
 seed_everything: 2
 
 trainer:
-  max_steps: 20000
+  # 20,000 -> 400,000 -> 500,000. Under constant_warmup max_steps is a stopping
+  # rule and nothing else, so raising it and resubmitting WITHOUT FRESH extends
+  # the same curve with no discontinuity. It has to stay equal to
+  # probe_residual_lossexcl_r2.yaml's: those two are the same experiment with
+  # and without the residual, and they are read against each other at matched
+  # steps.
+  max_steps: 500000
 
 data:
   data_spatial_shape: [13, 80, 360]

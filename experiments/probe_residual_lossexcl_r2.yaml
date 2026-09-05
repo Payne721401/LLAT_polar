@@ -37,9 +37,17 @@
 seed_everything: 2
 
 trainer:
-  # Identical to probe_lossexcl_24h.yaml, which is the control. Changing one
+  # Identical to probe_lossexcl.yaml, which is the control. Changing one
   # without the other turns a comparison into two runs of different lengths.
-  max_steps: 300000
+  #
+  # 300,000 -> 500,000. At 269,225 steps the residual leads on all three
+  # surface variables this project forecasts - msl by 3.7 %, vt10 by 2.2 %,
+  # vr10 by 2.0 % - having taken each lead at a different step (117k, 142k,
+  # 221k), which is not something noise does three times in the same direction.
+  # The aggregate val_loss still favours the control but its margin has been
+  # closing monotonically since 175,000: 3.37 %, 2.75 %, 2.01 %, 1.56 %. Both
+  # trends say the ordering is still moving, so the run is not finished.
+  max_steps: 500000
 
 data:
   data_spatial_shape: [13, 80, 360]
